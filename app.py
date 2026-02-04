@@ -9,7 +9,7 @@ st.set_page_config(page_title="Sprint Dashboard Pro", layout="wide")
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # 2. Đọc dữ liệu (Thay link Sheet của bạn vào đây)
-URL = "https://docs.google.com/spreadsheets/d/your_id/edit"
+URL = "https://docs.google.com/spreadsheets/d/1llUlTDfR413oZelu-AoMsC0lEzHqXOkB4SCwc_4zmAo/edit?pli=1&gid=982443592#gid=982443592"
 
 try:
     # Đọc dữ liệu từ hàng thứ 2 (để lấy đúng header: Userstory/Todo, State, Estimate Dev, Real, PIC)
