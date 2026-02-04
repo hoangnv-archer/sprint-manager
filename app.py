@@ -1,20 +1,27 @@
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 
-st.title("📊 Sprint Dashboard Bảo Mật")
+st.set_page_config(page_title="Sprint Dashboard", layout="wide")
 
-# Kết nối an toàn bằng Secrets đã cài đặt
+st.title("📊 Sprint Backlog Analyzer (Secure Mode)")
+
+# Kết nối an toàn qua Secrets
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# Đọc dữ liệu (Thay link trình duyệt của file Sheet vào đây, link này không cần publish)
-df = conn.read(spreadsheet="https://docs.google.com/spreadsheets/d/xxx/edit#gid=0")
+# Đọc dữ liệu (Dán link trình duyệt của file Sheet vào đây)
+# Lưu ý: Chỉ cần link bình thường, không cần Publish to web
+url = "https://docs.google.com/spreadsheets/d/ID_FILE_CỦA_BẠN/edit"
 
-st.dataframe(df)
 try:
-    # Đọc dữ liệu từ Google Sheets
-    df = pd.read_csv(LINK_CSV)
+    df = conn.read(spreadsheet=url)
     
-    # Làm sạch dữ liệu: Chuyển dấu phẩy thành dấu chấm để máy hiểu là số
+    # Hiển thị bảng dữ liệu để kiểm tra
+    st.write("Dữ liệu hiện tại:")
+    st.dataframe(df)
+    
+    # Tại đây bạn có thể thêm các code vẽ biểu đồ như tôi đã hướng dẫn ở trên
+except Exception as e:
+    st.error(f"Đang chờ kết nối dữ liệu... Lỗi: {e}")
     for col in ['Estimate', 'Actual']:
         if col in df.columns:
             df[col] = df[col].astype(str).str.replace(',', '.').astype(float)
