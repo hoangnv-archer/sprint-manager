@@ -12,7 +12,7 @@ try:
     # 1. Đọc dữ liệu thô
     raw_df = conn.read(spreadsheet=URL, header=None)
     
-    # 2. Tìm hàng tiêu đề có chữ Userstory/Todo
+    # 2. Tìm hàng tiêu đề (Userstory/Todo)
     header_idx = None
     for i, row in raw_df.iterrows():
         if "Userstory/Todo" in row.values:
@@ -20,33 +20,50 @@ try:
             break
 
     if header_idx is not None:
-        # Đọc dữ liệu từ hàng tiêu đề
+        # 3. Đọc dữ liệu từ hàng tiêu đề trở đi
         df = conn.read(spreadsheet=URL, skiprows=header_idx, ttl=0)
         df.columns = [str(c).strip() for c in df.columns]
 
-        # 3. Chuyển đổi số (xử lý dấu phẩy)
+        # 4. Xử lý số liệu
         for c in ['Estimate Dev', 'Real']:
             if c in df.columns:
                 df[c] = df[c].astype(str).str.replace(',', '.')
                 df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
 
-        # 4. Lọc bỏ dòng tiêu đề nhóm (dòng không có tên PIC)
-        df_tasks = df[df['PIC'].notna() & (df['PIC'] != '') & (df['PIC'] != '#N/A')].copy()
+        # 5. Lọc task thực tế (Dòng có PIC)
+        df_tasks = df[df['PIC'].notna() & (df['PIC'] != '')].copy()
 
-        st.title("🚀 Tổng hợp Tốc độ Team")
+        st.title("🚀 Phân Tích Tốc Độ Team")
 
-        # 5. Gom nhóm dữ liệu theo từng người
-        # Tính Tổng Dự Kiến (Est), Tổng Thực Tế (Real)
-        v_df = df_tasks.groupby('PIC')[['Estimate Dev', 'Real']].sum().reset_index()
+        # 6. Gom nhóm tính tổng theo PIC
+        v_df = df_tasks.groupby('PIC').agg({'Estimate Dev': 'sum', 'Real': 'sum'}).reset_index()
 
-        # Tính Hiệu suất: (Dự kiến / Thực tế) * 100
-        v_df['Efficiency'] = (v_df['Estimate Dev'] / v_df['Real'] * 100).fillna(0).round(1)
+        # 7. Tính hiệu suất (%)
+        v_df['Hiệu suất (%)'] = (v_df['Estimate Dev'] / v_df['Real'] * 100).fillna(0).round(1)
 
-        # Hiển thị bảng tổng hợp
-        st.subheader("📊 Bảng chỉ số năng suất")
+        # HIỂN THỊ BẢNG TỔNG HỢP
+        st.subheader("📊 Bảng chỉ số tốc độ")
         st.table(v_df)
 
-        # 6. Đánh giá Nhanh/Chậm
-        st.subheader("🔍 Phân tích tốc độ cá nhân")
+        # 8. Phân tích chi tiết từng người
+        st.subheader("🔍 Đánh giá Nhanh / Chậm")
         cols = st.columns(len(v_df))
-        for
+        
+        for idx, row in v_df.iterrows():
+            with cols[idx]:
+                name = row['PIC']
+                est = row['Estimate Dev']
+                real = row['Real']
+                
+                st.write(f"**{name}**")
+                if real > est:
+                    st.error(f"⚠️ Chậm {real-est:.1f}h")
+                elif real < est and real > 0:
+                    st.success(f"⚡ Nhanh {est-real:.1f}h")
+                else:
+                    st.info("✅ Đúng hạn")
+                
+                st.metric("Hiệu suất", f"{row['Hiệu suất (%)']}%")
+
+        # 9. Biểu đồ so sánh
+        fig = px
