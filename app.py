@@ -2,74 +2,82 @@ import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 
-st.set_page_config(page_title="Sprint Analyzer Pro", layout="wide")
+st.set_page_config(page_title="Sprint Analytics Pro", layout="wide")
 
-# Kết nối an toàn qua Secrets
+# Kết nối Google Sheets
 conn = st.connection("gsheets", type=GSheetsConnection)
-
-# Dán link trình duyệt file Sheet của bạn vào đây
 URL = "https://docs.google.com/spreadsheets/d/1llUlTDfR413oZelu-AoMsC0lEzHqXOkB4SCwc_4zmAo/edit?pli=1&gid=982443592#gid=982443592"
 
 try:
-    # 1. Đọc dữ liệu thô (không lấy header) để dò tìm hàng tiêu đề thực sự
+    # Bước 1: Đọc và tìm hàng tiêu đề (Header)
     raw_df = conn.read(spreadsheet=URL, header=None)
-    
-    # Tìm hàng chứa chữ "Userstory/Todo" để xác định header
-    header_idx = None
-    for i, row in raw_df.iterrows():
-        if "Userstory/Todo" in row.values:
-            header_idx = i
-            break
-            
+    header_idx = next((i for i, row in raw_df.iterrows() if "Userstory/Todo" in row.values), None)
+
     if header_idx is not None:
-        # Đọc lại dữ liệu bắt đầu từ hàng tiêu đề đã tìm thấy
-        df = conn.read(spreadsheet=URL, skiprows=header_idx)
-        
-        # Làm sạch tên cột (xóa khoảng trắng thừa)
+        df = conn.read(spreadsheet=URL, skiprows=header_idx, ttl=0)
         df.columns = [str(c).strip() for c in df.columns]
-        
-        # 2. Xử lý số liệu: Chuyển '185,5' thành 185.5
+
+        # Bước 2: Chuẩn hóa số liệu (Sửa lỗi 185,5 -> 185.5) 
         for col in ['Estimate Dev', 'Real', 'Remain Dev']:
             if col in df.columns:
                 df[col] = df[col].astype(str).str.replace(',', '.')
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
-        # 3. Lọc dữ liệu: Chỉ lấy dòng có PIC và bỏ qua dòng 'Summary' (hàng ngay dưới header)
-        # Chúng ta lọc bỏ dòng có chứa tổng số 185.5 bằng cách kiểm tra PIC hợp lệ
-        valid_pics = ['Tài', 'Dương', 'QA', 'Quân'] # Bạn có thể thêm tên team vào đây
-        df_clean = df[df['PIC'].isin(valid_pics)].copy()
+        # Bước 3: Lọc lấy các dòng task thực tế (bỏ qua dòng tiêu đề nhóm màu xám) 
+        df_clean = df[df['PIC'].notna() & (df['PIC'] != '#N/A') & (df['PIC'].str.strip() != '')].copy()
 
-        # 4. Giao diện Dashboard
-        st.title("🚀 Sprint Backlog Analysis")
-        
-        # Tính toán các chỉ số
+        st.title("📊 Phân Tích Hiệu Suất Sprint")
+
+        # --- PHẦN 1: BURNDOWN CHART GIẢ LẬP ---
+        st.subheader("📉 Sprint Burndown Chart (Dựa trên khối lượng còn lại)")
         total_est = df_clean['Estimate Dev'].sum()
-        total_real = df_clean['Real'].sum()
+        total_remain = df_clean['Remain Dev'].sum()
         
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Tổng Giờ Dự Tính (Est)", f"{total_est:.1f}h")
-        c2.metric("Thực Tế Đã Làm (Real)", f"{total_real:.1f}h")
-        
-        # Tính % hoàn thành
-        done_tasks = len(df_clean[df_clean['State'] == 'Done'])
-        total_tasks = len(df_clean)
-        if total_tasks > 0:
-            progress = (done_tasks / total_tasks) * 100
-            c3.metric("Tiến độ Sprint", f"{progress:.1f}%")
+        # Tạo biểu đồ đơn giản thể hiện công việc còn lại so với mục tiêu
+        fig_burn = go.Figure()
+        fig_burn.add_trace(go.Bar(name='Đã làm', x=['Sprint Progress'], y=[total_est - total_remain]))
+        fig_burn.add_trace(go.Bar(name='Còn lại (Remain)', x=['Sprint Progress'], y=[total_remain]))
+        fig_burn.update_layout(barmode='stack', height=400)
+        st.plotly_chart(fig_burn, use_container_width=True)
 
-        # 5. Biểu đồ theo PIC
-        st.subheader("Phân bổ khối lượng theo thành viên")
-        pic_chart = df_clean.groupby('PIC')[['Estimate Dev', 'Real']].sum().reset_index()
-        fig = px.bar(pic_chart, x='PIC', y=['Estimate Dev', 'Real'], barmode='group')
-        st.plotly_chart(fig, use_container_width=True)
-
-        # 6. Bảng danh sách task (đã lọc sạch)
-        st.subheader("Danh sách Task chi tiết")
-        st.dataframe(df_clean[['Userstory/Todo', 'State', 'Estimate Dev', 'Real', 'PIC']])
+        # --- PHẦN 2: PHÂN TÍCH CHI TIẾT TỪNG NGƯỜI (PIC) ---
+        st.subheader("👤 Phân tích năng suất cá nhân")
         
+        # Tính toán chỉ số cho từng PIC
+        pic_stats = df_clean.groupby('PIC').agg({
+            'Estimate Dev': 'sum',
+            'Real': 'sum',
+            'Userstory/Todo': 'count'
+        }).reset_index()
+
+        # Tính toán nhanh hay chậm: (Real / Estimate)
+        # > 1: Chậm (tốn nhiều thời gian hơn dự kiến)
+        # < 1: Nhanh (xong sớm hơn dự kiến)
+        pic_stats['Speed_Index'] = pic_stats['Real'] / pic_stats['Estimate Dev']
+        
+        cols = st.columns(len(pic_stats))
+        for i, row in pic_stats.iterrows():
+            with cols[i]:
+                status = "🚀 Nhanh" if row['Speed_Index'] < 1 else "⚠️ Chậm"
+                if row['Speed_Index'] == 1: status = "✅ Đúng hạn"
+                
+                st.metric(label=f"PIC: {row['PIC']}", value=f"{row['Real']}h / {row['Estimate Dev']}h", delta=status)
+                st.write(f"Số Task: {row['Userstory/Todo']}")
+                
+                # Thanh tiến độ cá nhân
+                efficiency = (1 / row['Speed_Index']) * 100 if row['Speed_Index'] > 0 else 0
+                st.write(f"Hiệu suất: {efficiency:.1f}%")
+                st.progress(min(efficiency/100, 1.0))
+
+        # --- PHẦN 3: BIỂU ĐỒ SO SÁNH TRỰC QUAN ---
+        fig_pic = px.bar(pic_stats, x='PIC', y=['Estimate Dev', 'Real'], 
+                         title="So sánh Tổng giờ Dự kiến vs Thực tế", barmode='group')
+        st.plotly_chart(fig_pic, use_container_width=True)
+
     else:
-        st.error("Không tìm thấy hàng tiêu đề 'Userstory/Todo'. Vui lòng kiểm tra lại cấu trúc Sheet.")
+        st.error("Không tìm thấy hàng tiêu đề 'Userstory/Todo'!")
 
 except Exception as e:
-    st.error(f"Lỗi hệ thống: {e}")
+    st.error(f"Lỗi: {e}")
