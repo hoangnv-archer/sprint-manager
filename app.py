@@ -67,27 +67,56 @@ try:
         # 6. Bảng danh sách task (đã lọc sạch)
         st.subheader("Danh sách Task chi tiết")
         st.dataframe(df_clean[['Userstory/Todo', 'State', 'Estimate Dev', 'Real', 'PIC']])
+              
+        # --- TÍNH NĂNG MỚI: ĐÁNH GIÁ HIỆU SUẤT CÁ NHÂN ---
+        st.subheader("👤 Phân tích Hiệu suất từng thành viên")
+        
+        # Gom nhóm dữ liệu theo PIC
+        pic_stats = df_clean.groupby('PIC').agg({
+            'Estimate Dev': 'sum',
+            'Real': 'sum',
+            'Userstory/Todo': 'count'
+        }).reset_index()
 
-    
-        # 7. Đánh giá nhanh hay chậm
-        st.subheader("📊 Tổng hợp năng suất")
-            st.dataframe(v_df, use_container_width=True)
+        # Tính chỉ số hiệu suất: Hiệu suất (%) = (Dự tính / Thực tế) * 100
+        # Nếu > 100% là làm nhanh (xong sớm), < 100% là làm chậm (lố giờ)
+        pic_stats['Efficiency'] = (pic_stats['Estimate Dev'] / pic_stats['Real'] * 100).fillna(0).round(1)
+        # Thay thế giá trị vô hạn (nếu Real = 0)
+        pic_stats.loc[pic_stats['Real'] == 0, 'Efficiency'] = 0
 
-            st.subheader("🔍 Đánh giá cá nhân")
-            cols = st.columns(len(v_df))
-            for idx, row in v_df.iterrows():
-                with cols[idx]:
-                    st.write(f"**{row['PIC']}**")
-                    diff = row['Estimate Dev'] - row['Real']
-                    if diff < 0:
-                        st.error(f"⚠️ Chậm {abs(diff):.1f}h")
-                    elif diff > 0:
-                        st.success(f"⚡ Nhanh {diff:.1f}h")
-                    else:
-                        st.info("✅ Đúng hạn")
-                    st.metric("Hiệu suất", f"{row['Hiệu suất (%)']}%")
+        # Hiển thị Metric cho từng người
+        cols = st.columns(len(pic_stats))
+        for i, row in pic_stats.iterrows():
+            with cols[i]:
+                name = row['PIC']
+                eff = row['Efficiency']
                 
+                # Logic đánh giá tốc độ
+                if eff > 105:
+                    status = "⚡ Nhanh"
+                    color = "normal" # Màu xanh mặc định của delta
+                elif eff < 95 and eff > 0:
+                    status = "⚠️ Chậm"
+                    color = "inverse" # Màu đỏ
+                else:
+                    status = "✅ Đúng hạn"
+                    color = "off" # Màu xám/bình thường
 
+                st.metric(label=f"PIC: {name}", value=f"{eff}%", delta=status, delta_color=color)
+                st.caption(f"Dự tính: {row['Estimate Dev']}h | Thực tế: {row['Real']}h")
+
+        # Biểu đồ so sánh trực quan
+        st.divider()
+        st.subheader("📈 So sánh khối lượng Dự kiến vs Thực tế")
+        fig = px.bar(pic_stats, x='PIC', y=['Estimate Dev', 'Real'], 
+                     barmode='group', text_auto=True,
+                     labels={'value': 'Số giờ (h)', 'variable': 'Loại'},
+                     color_discrete_map={'Estimate Dev': '#636EFA', 'Real': '#EF553B'})
+        st.plotly_chart(fig, use_container_width=True)
+
+        # 6. Bảng danh sách task
+        st.subheader("📋 Chi tiết danh sách Task")
+        st.dataframe(df_clean[['Userstory/Todo', 'State', 'Estimate Dev', 'Real', 'PIC']], use_container_width=True)
         
     else:
         st.error("Không tìm thấy hàng tiêu đề 'Userstory/Todo'. Vui lòng kiểm tra lại cấu trúc Sheet.")
