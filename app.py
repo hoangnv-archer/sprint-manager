@@ -74,13 +74,13 @@ try:
         cols = st.columns(len(v_df))
 
         for idx, row in v_df.iterrows():
-        with cols[idx]:
-        st.write(f"**{row['PIC']}**")
-        est = row['Estimate Dev']
-        real = row['Real']
+            with cols[idx]:
+            st.write(f"**{row['PIC']}**")
+            est = row['Estimate Dev']
+            real = row['Real']
         
         # Logic: Thực tế > Dự kiến là Chậm, ngược lại là Nhanh
-            if real > est:
+        if real > est:
             st.error(f"⚠️ Chậm {real-est:.1f}h")
             elif real < est and real > 0:
             st.success(f"⚡ Nhanh {est-real:.1f}h")
