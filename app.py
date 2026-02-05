@@ -73,22 +73,65 @@ try:
                 # Thanh tiến độ công việc của người đó
                 progress_val = (row['Active_Real'] / row['Total_Estimate']) if row['Total_Estimate'] > 0 else 0
                 st.progress(min(progress_val, 1.0))
-                st.caption(f"Tốc độ làm: {row['Efficiency (%)']}%")
+                st.caption(f"Tiến độ: {row['Efficiency (%)']}%")
 
         st.divider()
 
         # --- BIỂU ĐỒ PHÂN TÍCH ---
-        st.subheader("📊 Biểu đồ so sánh: Đã làm vs Đang chờ (None)")
+        Để cập nhật giá trị Real-time (thời gian thực tế làm việc) vào biểu đồ so sánh với phần Dự kiến đang chờ (None), chúng ta cần gộp 3 chỉ số vào cùng một biểu đồ:
+
+Thực tế đã làm (Real): Số giờ thực tế đã nhập.
+
+Dự kiến đang chờ (None): Số giờ Estimate của các task có State trống.
+
+Tổng dự tính (Estimate): Để đối chiếu xem thực tế đang chiếm bao nhiêu phần của kế hoạch.
+
+Dưới đây là đoạn code đã được cập nhật lại logic xử lý dữ liệu (Melt) và cấu hình biểu đồ để hiển thị giá trị thời gian thực:
+
+Python
+
+        st.subheader("📊 Biểu đồ so sánh: Real-time vs Tồn đọng (None)")
         
-        # Chuẩn bị dữ liệu biểu đồ chồng (Stacked Bar)
-        fig_df = pic_stats.melt(id_vars='PIC', value_vars=['Active_Real', 'Pending_Est'], 
-                                var_name='Trạng thái', value_name='Số giờ')
-        fig_df['Trạng thái'] = fig_df['Trạng thái'].replace({'Active_Real': 'Thực tế đã làm', 'Pending_Est': 'Dự kiến đang chờ (None)'})
+        # 1. Chuẩn bị dữ liệu: Lấy Real, Estimate và Pending_Est
+        # Giả sử pic_stats của bạn đã có các cột: PIC, Active_Real, Total_Estimate, Pending_Est
+        fig_df = pic_stats.melt(
+            id_vars='PIC', 
+            value_vars=['Active_Real', 'Total_Estimate', 'Pending_Est'], 
+            var_name='Trạng thái', 
+            value_name='Số giờ'
+        )
         
-        fig = px.bar(fig_df, x='PIC', y='Số giờ', color='Trạng thái', 
-                     title="Khối lượng công việc tích lũy",
-                     color_discrete_map={'Thực tế đã làm': '#00C853', 'Dự kiến đang chờ (None)': '#FFD600'})
-        st.plotly_chart(fig, use_container_width=True)
+        # 2. Đổi tên nhãn hiển thị cho trực quan
+        name_map = {
+            'Active_Real': 'Thực tế (Real-time)', 
+            'Total_Estimate': 'Tổng dự tính (Kế hoạch)',
+            'Pending_Est': 'Dự kiến đang chờ (None)'
+        }
+        fig_df['Trạng thái'] = fig_df['Trạng thái'].replace(name_map)
+        
+        # 3. Vẽ biểu đồ cột nhóm (Grouped Bar) để so sánh trực diện Real-time với Kế hoạch
+        fig = px.bar(
+            fig_df, 
+            x='PIC', 
+            y='Số giờ', 
+            color='Trạng thái', 
+            barmode='group', # Chuyển sang group để so sánh realtime với kế hoạch dễ hơn
+            text_auto='.1f', # Hiển thị giá trị số giờ trên đầu cột
+            title="Phân tích khối lượng công việc Real-time",
+            color_discrete_map={
+                'Thực tế (Real-time)': '#00C853',      # Xanh lá (Hoàn thành)
+                'Tổng dự tính (Kế hoạch)': '#636EFA', # Xanh dương (Tổng)
+                'Dự kiến đang chờ (None)': '#FFD600'  # Vàng (Tồn đọng)
+            }
+        )
+        
+        # Tùy chỉnh thêm để biểu đồ chuyên nghiệp hơn
+        fig.update_layout(
+            xaxis_title="Thành viên Team",
+            yaxis_title="Số giờ (h)",
+            legend_title="Chỉ số",
+            hovermode="x unified"
+        )
 
         # 4. Bảng chi tiết (Highlight các task None)
         st.subheader("📋 Danh sách Task chi tiết")
