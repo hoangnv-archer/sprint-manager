@@ -71,24 +71,23 @@ try:
     
         # 7. Đánh giá nhanh hay chậm
         st.subheader("🔍 Đánh giá chi tiết cá nhân")
-        cols = st.columns(len(v_df))
-
-        for idx, row in v_df.iterrows():
-        with cols[idx]:
-            st.write(f"**{row['PIC']}**")
-            est = row['Estimate Dev']
-            real = row['Real']
-        
-        # Logic: Thực tế > Dự kiến là Chậm, ngược lại là Nhanh
-        if real > est:
-            st.error(f"⚠️ Chậm {real-est:.1f}h")
-            elif real < est and real > 0:
-            st.success(f"⚡ Nhanh {est-real:.1f}h")
-            else:
-            st.info("✅ Đúng hạn")
-            
-            st.metric("Hiệu suất", f"{row['Hiệu suất (%)']}%")
-        
+        if not v_df.empty:
+            cols = st.columns(len(v_df))
+            for idx, row in v_df.iterrows():
+                with cols[idx]:
+                    st.write(f"**{row['PIC']}**")
+                    est = row['Estimate Dev']
+                    real = row['Real']
+                    
+                    if real > est:
+                        st.error(f"⚠️ Chậm {real-est:.1f}h")
+                    elif real < est and real > 0:
+                        st.success(f"⚡ Nhanh {est-real:.1f}h")
+                    else:
+                        st.info("✅ Đúng hạn")
+                        
+                    st.metric("Hiệu suất", f"{row['Hiệu suất (%)']}%")
+                
 
         
     else:
