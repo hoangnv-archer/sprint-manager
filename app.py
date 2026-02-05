@@ -3,12 +3,13 @@ from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 import plotly.express as px
 
-st.set_page_config(page_title="Sprint Analyzer Pro", layout="wide")
+st.set_page_config(page_title="Sprint Workload Analyzer", layout="wide")
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 URL = "https://docs.google.com/spreadsheets/d/1llUlTDfR413oZelu-AoMsC0lEzHqXOkB4SCwc_4zmAo/edit?pli=1&gid=982443592#gid=982443592"
 
 try:
+    # 1. Đọc dữ liệu
     raw_df = conn.read(spreadsheet=URL, header=None)
     header_idx = None
     for i, row in raw_df.iterrows():
@@ -20,90 +21,85 @@ try:
         df = conn.read(spreadsheet=URL, skiprows=header_idx)
         df.columns = [str(c).strip() for c in df.columns]
         
-        # 2. Xử lý số liệu
-        for col in ['Estimate Dev', 'Real', 'Remain Dev']:
+        # 2. Xử lý số liệu và chuẩn hóa State
+        for col in ['Estimate Dev', 'Real']:
             if col in df.columns:
-                df[col] = df[col].astype(str).str.replace(',', '.')
-                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-
-        # 3. Lọc dữ liệu: PIC hợp lệ
-        valid_pics = ['Tài', 'Dương', 'QA', 'Quân', 'Phú'] 
-        df_clean = df[df['PIC'].isin(valid_pics)].copy()
-
-        # Đảm bảo cột State không bị khoảng trắng thừa
-        df_clean['State'] = df_clean['State'].astype(str).str.strip()
-
-        st.title("🚀 Sprint Backlog Performance Analysis")
+                df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
         
-        # --- TÍNH TOÁN HIỆU SUẤT VÀ TỒN ĐỘNG ---
-        # Lọc riêng các task chưa làm (State == "None")
-        df_pending = df_clean[df_clean['State'].str.lower() == 'none'].copy()
-        
-        # Gom nhóm dữ liệu theo PIC
-        pic_stats = df_clean.groupby('PIC').agg({
+        # Gán nhãn "None" cho các ô State trống
+        df['State'] = df['State'].fillna('None').replace('', 'None')
+
+        # 3. Lọc Team (Chỉ lấy những dòng đã giao PIC)
+        valid_pics = ['Tài', 'Dương', 'QA', 'Quân', 'Phú']
+        df_team = df[df['PIC'].isin(valid_pics)].copy()
+
+        st.title("🚀 Phân Tích Khối Lượng & Hiệu Suất Team")
+
+        # --- TÍNH TOÁN THEO LOGIC MỚI ---
+        # Tính tổng giờ Est của các task State == "None" (Chưa làm)
+        pending_work = df_team[df['State'] == 'None'].groupby('PIC')['Estimate Dev'].sum().reset_index()
+        pending_work.columns = ['PIC', 'Pending_Est']
+
+        # Tính tổng giờ Est và Real của các task đã/đang làm (State != "None")
+        active_work = df_team[df['State'] != 'None'].groupby('PIC').agg({
             'Estimate Dev': 'sum',
             'Real': 'sum'
         }).reset_index()
+        active_work.columns = ['PIC', 'Active_Est', 'Active_Real']
 
-        # Tính tổng giờ "None" (Chưa làm) cho từng PIC
-        pending_stats = df_pending.groupby('PIC')['Estimate Dev'].sum().reset_index()
-        pending_stats.columns = ['PIC', 'Pending Hours']
+        # Gộp tất cả dữ liệu theo PIC
+        pic_stats = pd.DataFrame({'PIC': valid_pics})
+        pic_stats = pic_stats.merge(active_work, on='PIC', how='left')
+        pic_stats = pic_stats.merge(pending_work, on='PIC', how='left').fillna(0)
 
-        # Gộp dữ liệu
-        final_stats = pd.merge(pic_stats, pending_stats, on='PIC', how='left').fillna(0)
+        # Tổng Estimate của một người = Giờ đang làm + Giờ đang chờ (None)
+        pic_stats['Total_Estimate'] = pic_stats['Active_Est'] + pic_stats['Pending_Est']
 
-        # Hiệu suất: Chỉ tính trên những task đã bắt đầu làm (có Real > 0 hoặc State != None)
-        # Ở đây tính tổng quát để bạn thấy tốc độ chung
-        final_stats['Efficiency'] = (final_stats['Estimate Dev'] / final_stats['Real'] * 100).fillna(0).round(1)
-        final_stats.loc[final_stats['Real'] == 0, 'Efficiency'] = 0
+        # Hiệu suất làm việc (Chỉ tính trên những task đã bắt đầu làm để công bằng)
+        pic_stats['Efficiency (%)'] = (pic_stats['Active_Est'] / pic_stats['Active_Real'] * 100).fillna(0).round(1)
+        pic_stats.loc[pic_stats['Active_Real'] == 0, 'Efficiency (%)'] = 0
 
         # --- GIAO DIỆN ---
-        st.subheader("👤 Đánh giá năng suất và Khối lượng chưa làm")
+        st.subheader("👤 Chi tiết khối lượng từng thành viên")
+        cols = st.columns(len(valid_pics))
         
-        cols = st.columns(len(final_stats))
-        for i, row in final_stats.iterrows():
+        for i, row in pic_stats.iterrows():
             with cols[i]:
-                name = row['PIC']
-                pending = row['Pending Hours']
-                eff = row['Efficiency']
+                st.write(f"### **{row['PIC']}**")
+                st.metric("Tổng Est", f"{row['Total_Estimate']}h")
+                st.write(f"✅ Đã làm: **{row['Active_Real']}h**")
+                st.write(f"⏳ Đang chờ (None): **{row['Pending_Est']}h**")
                 
-                # Hiển thị hiệu suất (Tốc độ làm việc)
-                st.metric(label=f"PIC: {name}", value=f"{eff}%", 
-                          delta=f"{pending}h chưa làm", delta_color="inverse")
-                
-                st.write(f"⌛ Dự kiến còn: **{pending}h**")
-                st.progress(min(eff/200, 1.0) if eff > 0 else 0)
+                # Thanh tiến độ công việc của người đó
+                progress_val = (row['Active_Real'] / row['Total_Estimate']) if row['Total_Estimate'] > 0 else 0
+                st.progress(min(progress_val, 1.0))
+                st.caption(f"Tốc độ làm: {row['Efficiency (%)']}%")
 
         st.divider()
 
         # --- BIỂU ĐỒ PHÂN TÍCH ---
-        st.subheader("📊 So sánh Dự kiến, Thực tế và Tồn đọng (None)")
+        st.subheader("📊 Biểu đồ so sánh: Đã làm vs Đang chờ (None)")
         
-        # Chuẩn bị dữ liệu cho biểu đồ
-        fig_data = final_stats.melt(id_vars='PIC', value_vars=['Estimate Dev', 'Real', 'Pending Hours'],
-                                    var_name='Loại', value_name='Số giờ')
+        # Chuẩn bị dữ liệu biểu đồ chồng (Stacked Bar)
+        fig_df = pic_stats.melt(id_vars='PIC', value_vars=['Active_Real', 'Pending_Est'], 
+                                var_name='Trạng thái', value_name='Số giờ')
+        fig_df['Trạng thái'] = fig_df['Trạng thái'].replace({'Active_Real': 'Thực tế đã làm', 'Pending_Est': 'Dự kiến đang chờ (None)'})
         
-        fig = px.bar(fig_data, x='PIC', y='Số giờ', color='Loại', 
-                     barmode='group', text_auto=True,
-                     color_discrete_map={
-                         'Estimate Dev': '#636EFA', 
-                         'Real': '#EF553B', 
-                         'Pending Hours': '#FECB52' # Màu vàng cho các task chưa làm
-                     })
+        fig = px.bar(fig_df, x='PIC', y='Số giờ', color='Trạng thái', 
+                     title="Khối lượng công việc tích lũy",
+                     color_discrete_map={'Thực tế đã làm': '#00C853', 'Dự kiến đang chờ (None)': '#FFD600'})
         st.plotly_chart(fig, use_container_width=True)
 
-        # 6. Bảng danh sách task có highlight task "None"
-        st.subheader("📋 Chi tiết danh sách Task")
-        
-        # Thêm màu để phân biệt task None trong bảng
-        def highlight_none(row):
-            return ['background-color: #fff9c4' if row.State.lower() == 'none' else '' for _ in row]
+        # 4. Bảng chi tiết (Highlight các task None)
+        st.subheader("📋 Danh sách Task chi tiết")
+        def style_rows(row):
+            return ['background-color: #f5f5f5; color: #9e9e9e' if row.State == 'None' else '' for _ in row]
 
-        st.dataframe(df_clean[['Userstory/Todo', 'State', 'Estimate Dev', 'Real', 'PIC']].style.apply(highlight_none, axis=1), 
+        st.dataframe(df_team[['Userstory/Todo', 'State', 'Estimate Dev', 'Real', 'PIC']].style.apply(style_rows, axis=1), 
                      use_container_width=True)
               
     else:
-        st.error("Không tìm thấy hàng tiêu đề 'Userstory/Todo'.")
+        st.error("Không tìm thấy tiêu đề 'Userstory/Todo'.")
 
 except Exception as e:
     st.error(f"Lỗi hệ thống: {e}")
