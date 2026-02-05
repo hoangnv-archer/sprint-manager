@@ -74,7 +74,7 @@ try:
         cols = st.columns(len(v_df))
 
         for idx, row in v_df.iterrows():
-            with cols[idx]:
+        with cols[idx]:
             st.write(f"**{row['PIC']}**")
             est = row['Estimate Dev']
             real = row['Real']
