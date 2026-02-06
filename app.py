@@ -125,31 +125,48 @@ except Exception as e:
     st.error(f"Lỗi hệ thống: {e}")
 
 
-# --- TÍNH NĂNG GỬI BIỂU ĐỒ QUA DISCORD (KHÔNG DÙNG KALEIDO) ---
-st.sidebar.subheader("📢 Gửi ảnh biểu đồ")
-webhook_url_img = st.sidebar.text_input("Discord Webhook URL (Ảnh):", type="password", key="webhook_img")
+# --- TÍNH NĂNG GỬI BÁO CÁO CHI TIẾT QUA DISCORD (TEXT) ---
+st.sidebar.divider()
+st.sidebar.subheader("📢 Gửi báo cáo Text")
+webhook_url = st.sidebar.text_input("Dán Discord Webhook URL:", type="password", key="discord_text_url")
 
-if st.sidebar.button("🚀 Gửi ảnh lên Discord"):
-    if webhook_url_img and 'fig' in locals():
+if st.sidebar.button("📤 Gửi báo cáo đầy đủ vào Discord"):
+    if webhook_url:
         try:
-            # 1. Chuyển biểu đồ thành dữ liệu hình ảnh (Dùng engine mặc định của Plotly)
-            # Nếu không có kaleido, Plotly sẽ cố gắng dùng MathJax/Browser, 
-            # nhưng cách an toàn nhất trên Cloud là dùng buffer.
-            img_bytes = fig.to_image(format="png")
+            # 1. Tính toán các chỉ số tổng quát
+            total_tasks = len(df_team)
+            done_tasks = len(df_team[df_team['State'].str.lower() == 'done'])
+            progress_total = (done_tasks / total_tasks * 100) if total_tasks > 0 else 0
             
-            # 2. Gửi file đến Discord
-            files = {'file': ('sprint_report.png', img_bytes, 'image/png')}
-            payload = {"content": "📊 **Báo cáo biểu đồ Sprint hiện tại**"}
+            # 2. Xây dựng nội dung tin nhắn (Dùng Markdown Discord)
+            message = "🚀 **SPRINT PERFORMANCE REPORT** 🚀\n"
+            message += f"📊 **Tiến độ chung:** `{progress_total:.1f}%` ({done_tasks}/{total_tasks} Task Done)\n"
+            message += "━━━━━━━━━━━━━━━━━━━━━\n"
             
-            response = requests.post(webhook_url_img, data=payload, files=files)
+            # 3. Duyệt qua từng thành viên trong pic_stats để lấy số liệu chi tiết
+            for _, row in pic_stats.iterrows():
+                # Chọn icon dựa trên tiến độ task
+                icon = "🟢" if row['Progress_Task_Based'] >= 80 else "🟡" if row['Progress_Task_Based'] >= 50 else "🔴"
+                
+                message += f"{icon} **{row['PIC']}**\n"
+                message += f"   • Tiến độ: `{row['Progress_Task_Based']}%` (Task)\n"
+                message += f"   • Đã làm: `{row['Active_Real']:.1f}h` | Chờ: `{row['Pending_Est']:.1f}h`\n"
+                message += f"   • Tổng Est: `{row['Total_Estimate']:.1f}h` \n\n"
+            
+            message += "━━━━━━━━━━━━━━━━━━━━━\n"
+            message += "💡 *Cập nhật lúc:* " + pd.Timestamp.now().strftime('%H:%M - %d/%m/%Y') + "\n"
+            message += "🔗 [Xem Dashboard chi tiết tại đây](https://your-streamlit-link.streamlit.app/)"
+
+            # 4. Gửi yêu cầu đến Discord
+            payload = {"content": message}
+            response = requests.post(webhook_url, json=payload)
             
             if response.status_code in [200, 204]:
-                st.sidebar.success("✅ Đã gửi ảnh thành công!")
+                st.sidebar.success("✅ Đã gửi báo cáo thành công!")
             else:
                 st.sidebar.error(f"❌ Lỗi: {response.status_code}")
                 
         except Exception as e:
-            st.sidebar.error("⚠️ Không thể xuất ảnh trực tiếp trên Cloud do thiếu trình duyệt.")
-            st.sidebar.info("💡 Mẹo: Bạn có thể chụp ảnh màn hình hoặc dùng nút 'Download plot as png' trên biểu đồ rồi gửi thủ công.")
+            st.sidebar.error(f"❌ Lỗi khi xử lý dữ liệu: {e}")
     else:
-        st.sidebar.warning("⚠️ Vui lòng nhập URL.")
+        st.sidebar.warning("⚠️ Vui lòng nhập Webhook URL!")
