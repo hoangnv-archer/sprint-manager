@@ -79,8 +79,8 @@ try:
                     st.metric("Tiến độ Task", f"{row['Progress_Task_Based']}%", 
                               delta=f"{int(row['done_tasks'])}/{int(row['total_tasks'])} Done")
                     
-                    st.write(f"✅ Đã làm: **{row['Active_Real']}h**")
-                    st.write(f"⏳ Đang chờ: **{row['Pending_Est']}h**")
+                    st.write(f"✅ Thời gian thực tế đã làm: **{row['Active_Real']}h**")
+                    st.write(f"⏳ Thời gian estimate còn tồn đọng: **{row['Pending_Est']}h**")
                     
                     # Thanh progress trực quan theo số lượng Task
                     st.progress(min(row['Progress_Task_Based']/100, 1.0))
