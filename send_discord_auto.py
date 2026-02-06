@@ -8,6 +8,9 @@ WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK")
 SHEET_URL = os.environ.get("GSHEETS_URL")
 SERVICE_ACCOUNT_JSON = os.environ.get("GCP_SERVICE_ACCOUNT")
 
+discord_ids = {
+    # Nếu muốn tag một nhóm (Role) cho những người còn lại:
+    'TEAM_ROLE': '<@1387617307190366329>'}
 def get_report():
     try:
         # 1. Xác thực
@@ -43,21 +46,18 @@ def get_report():
         ).reset_index()
 
         # 6. SOẠN TIN NHẮN (Bổ sung phần 'Chưa làm')
-        msg = "⏰ **BÁO CÁO TỰ ĐỘNG (8:30 AM)** ☀️\n"
-        msg += "━━━━━━━━━━━━━━━━━━━━━\n"
+       msg = "🔔 **SÁNG NAY CÓ GÌ?** " + discord_ids.get('TEAM_ROLE', '@everyone') + "\n"
+    msg += "━━━━━━━━━━━━━━━━━━━━━\n"
+    
+    for _, r in pic_stats.iterrows():
+        # Lấy tag theo tên PIC, nếu không có thì dùng tên thường
+        mention = discord_ids.get(r['PIC'], r['PIC'])
         
-        for _, r in pic_stats.iterrows():
-            total = int(r['total'])
-            done = int(r['done'])
-            ip = int(r['ip'])
-            none = int(r['none'])
-            
-            progress = (done / total * 100) if total > 0 else 0
-            icon = "🟢" if progress >= 80 else "🟡" if progress >= 50 else "🔴"
-            
-            msg += f"{icon} **{r['PIC']}**: `{progress:.1f}%` Hoàn thành\n"
-            msg += f"   • Xong/Cancel: `{done}`\n"
-            msg += f"   • In Progress: `{ip}`\n"
+        p = (r['done'] / int(r['total']) * 100) if int(r['total']) > 0 else 0
+        icon = "🟢" if p >= 80 else "🟡" if p >= 50 else "🔴"
+        
+        msg += f"{icon} **{mention}**: `{p:.1f}%` Hoàn thành\n"
+        msg += f"   • Xong: `{int(r['done'])}` | IP: `{int(r['ip'])}` | None: `{int(r['none'])}` \n"
             msg += f"   • **Chưa làm (None): `{none}`**\n" # Thêm dòng này
             msg += f"   • Tổng task: `{total}`\n"
             msg += "─────────────────────\n"
