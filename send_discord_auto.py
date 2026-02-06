@@ -67,7 +67,7 @@ def get_report():
             msg += f"   ⏳ Chưa làm: `{none}`\n"
             msg += "─────────────────────\n"
         
-        msg += "💡 *Ghi chú: Task Cancel được tính là Done.*"
+        msg += "💡 *Ghi chú: Task được cập nhật hàng ngày theo Sprint backlog.*"
 
         # 6. Gửi tới Discord
         if WEBHOOK_URL:
