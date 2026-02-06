@@ -134,31 +134,31 @@ if st.sidebar.button("📤 Gửi báo cáo đầy đủ vào Discord"):
     if webhook_url:
         try:
             # 1. Tính toán các chỉ số tổng quát
-            total_tasks = len(df_team)
-            done_tasks = len(df_team[df_team['State'].str.lower() == 'done'])
-            progress_total = (done_tasks / total_tasks * 100) if total_tasks > 0 else 0
+            total_tasks_sprint = len(df_team)
+            done_tasks_sprint = len(df_team[df_team['State'].str.lower() == 'done'])
+            progress_overall = (done_tasks_sprint / total_tasks_sprint * 100) if total_tasks_sprint > 0 else 0
             
-            # 2. Xây dựng nội dung tin nhắn (Dùng Markdown Discord)
-            message = "🚀 **SPRINT PERFORMANCE REPORT** 🚀\n"
-            message += f"📊 **Tiến độ chung:** `{progress_total:.1f}%` ({done_tasks}/{total_tasks} Task Done)\n"
-            message += "━━━━━━━━━━━━━━━━━━━━━\n"
+            # 2. Xây dựng nội dung tin nhắn (Sử dụng Markdown Discord)
+            msg = "🚀 **SPRINT PERFORMANCE REPORT** 🚀\n"
+            msg += f"📊 **Tiến độ chung:** `{progress_overall:.1f}%` ({done_tasks_sprint}/{total_tasks_sprint} Task Done)\n"
+            msg += "━━━━━━━━━━━━━━━━━━━━━\n"
             
-            # 3. Duyệt qua từng thành viên trong pic_stats để lấy số liệu chi tiết
+            # 3. Duyệt qua từng thành viên để lấy số liệu
             for _, row in pic_stats.iterrows():
-                # Chọn icon dựa trên tiến độ task
-                icon = "🟢" if row['Progress_Task_Based'] >= 80 else "🟡" if row['Progress_Task_Based'] >= 50 else "🔴"
+                # Chọn icon dựa trên tiến độ (%)
+                p = row['Progress_Task_Based']
+                icon = "🟢" if p >= 80 else "🟡" if p >= 50 else "🔴"
                 
-                message += f"{icon} **{row['PIC']}**\n"
-                message += f"   • Tiến độ: `{row['Progress_Task_Based']}%` (Task)\n"
-                message += f"   • Đã làm: `{row['Active_Real']:.1f}h` | Chờ: `{row['Pending_Est']:.1f}h`\n"
-                message += f"   • Tổng Est: `{row['Total_Estimate']:.1f}h` \n\n"
+                msg += f"{icon} **{row['PIC']}**\n"
+                msg += f"   • Tiến độ: `{p}%` (Số lượng Task)\n"
+                msg += f"   • Thực tế: `{row['Active_Real']:.1f}h` | Chờ: `{row['Pending_Est']:.1f}h`\n"
+                msg += f"   • Tổng Est: `{row['Total_Estimate']:.1f}h` \n\n"
             
-            message += "━━━━━━━━━━━━━━━━━━━━━\n"
-            message += "💡 *Cập nhật lúc:* " + pd.Timestamp.now().strftime('%H:%M - %d/%m/%Y') + "\n"
-            message += "🔗 [Xem Dashboard chi tiết tại đây](https://your-streamlit-link.streamlit.app/)"
+            msg += "━━━━━━━━━━━━━━━━━━━━━\n"
+            msg += "💡 *Cập nhật lúc:* " + pd.Timestamp.now().strftime('%H:%M - %d/%m/%Y')
 
             # 4. Gửi yêu cầu đến Discord
-            payload = {"content": message}
+            payload = {"content": msg}
             response = requests.post(webhook_url, json=payload)
             
             if response.status_code in [200, 204]:
