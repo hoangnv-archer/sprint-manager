@@ -1,58 +1,54 @@
 import requests
 import pandas as pd
-from streamlit_gsheets import GSheetsConnection
 import os
-import streamlit as st
 
-# Lấy thông tin từ GitHub Secrets (đã cài ở Bước 3)
+# Lấy thông tin từ GitHub Secrets
 WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK")
 SHEET_URL = os.environ.get("GSHEETS_URL")
 
-def get_data_and_send():
+def send_report():
     try:
-        # Giả lập một connection để dùng GSheetsConnection mà không cần chạy app
-        conn = st.connection("gsheets", type=GSheetsConnection)
+        # Chuyển đổi link Sheet sang định dạng xuất CSV để đọc trực tiếp bằng Pandas
+        # Cách này nhanh và ổn định hơn khi chạy tự động
+        csv_url = SHEET_URL.replace('/edit?pli=1&', '/export?format=csv&')
         
-        # Đọc dữ liệu từ URL
-        raw_df = conn.read(spreadsheet=SHEET_URL, header=None)
-        header_idx = next((i for i, row in raw_df.iterrows() if "Userstory/Todo" in row.values), None)
+        # Đọc dữ liệu (Bỏ qua các hàng trống đầu tiên cho đến khi gặp 'Userstory/Todo')
+        df_raw = pd.read_csv(csv_url, header=None)
+        header_row = df_raw[df_raw.eq("Userstory/Todo").any(axis=1)].index[0]
+        df = pd.read_csv(csv_url, skiprows=header_row + 1)
         
-        if header_idx is not None:
-            df = conn.read(spreadsheet=SHEET_URL, skiprows=header_idx)
-            df.columns = [str(c).strip() for c in df.columns]
-            
-            # Chuẩn hóa trạng thái
-            df['State_Clean'] = df['State'].fillna('None').replace('', 'None').str.strip().str.lower()
-            valid_pics = ['Tài', 'Dương', 'QA', 'Quân', 'Phú', 'Thịnh', 'Đô', 'Tùng', 'Anim', 'Thắng VFX']
-            df_team = df[df['PIC'].isin(valid_pics)].copy()
+        # Làm sạch dữ liệu
+        df.columns = [str(c).strip() for c in df.columns]
+        df['State_Clean'] = df['State'].fillna('None').replace('', 'None').str.strip().str.lower()
+        
+        valid_pics = ['Tài', 'Dương', 'QA', 'Quân', 'Phú', 'Thịnh', 'Đô', 'Tùng', 'Anim', 'Thắng VFX']
+        df_team = df[df['PIC'].isin(valid_pics)].copy()
 
-            # Tính toán logic (Cancel = Done)
-            pic_stats = df_team.groupby('PIC').agg(
-                total=('Userstory/Todo', 'count'),
-                done=('State_Clean', lambda x: x.isin(['done', 'cancel']).sum()),
-                ip=('State_Clean', lambda x: (x == 'in progress').sum()),
-                none=('State_Clean', lambda x: (x == 'none').sum())
-            ).reset_index()
+        # Tính toán
+        pic_stats = df_team.groupby('PIC').agg(
+            total=('Userstory/Todo', 'count'),
+            done=('State_Clean', lambda x: x.isin(['done', 'cancel']).sum()),
+            ip=('State_Clean', lambda x: (x == 'in progress').sum()),
+            none=('State_Clean', lambda x: (x == 'none').sum())
+        ).reset_index()
 
-            # Xây dựng nội dung tin nhắn
-            msg = "⏰ **BÁO CÁO TỰ ĐỘNG ĐẦU NGÀY (8:30 AM)** ☀️\n"
-            msg += "━━━━━━━━━━━━━━━━━━━━━\n"
-            
-            for _, r in pic_stats.iterrows():
-                progress = (r['done'] / r['total'] * 100) if r['total'] > 0 else 0
-                icon = "🟢" if progress >= 80 else "🟡"
-                msg += f"{icon} **{r['PIC']}**: `{progress:.1f}%` Done\n"
-                msg += f"   • Xong/Cancel: `{int(r['done'])}` | In Progress: `{int(r['ip'])}` | None: `{int(r['none'])}` \n"
-            
-            msg += "━━━━━━━━━━━━━━━━━━━━━\n"
-            msg += "👉 Xem Dashboard: [Link App của bạn]"
+        # Soạn tin nhắn
+        msg = "⏰ **BÁO CÁO TỰ ĐỘNG (8:30 AM)** ☀️\n"
+        msg += "━━━━━━━━━━━━━━━━━━━━━\n"
+        for _, r in pic_stats.iterrows():
+            progress = (r['done'] / r['total'] * 100) if r['total'] > 0 else 0
+            icon = "🟢" if progress >= 80 else "🟡"
+            msg += f"{icon} **{r['PIC']}**: `{progress:.1f}%` | Xong: `{int(r['done'])}` | IP: `{int(r['ip'])}` | None: `{int(r['none'])}` \n"
+        
+        # Gửi sang Discord
+        response = requests.post(WEBHOOK_URL, json={"content": msg})
+        if response.status_code in [200, 204]:
+            print("✅ Gửi thành công!")
+        else:
+            print(f"❌ Lỗi Discord: {response.status_code}")
 
-            # Gửi lên Discord
-            requests.post(WEBHOOK_URL, json={"content": msg})
-            print("Đã gửi báo cáo thành công!")
-            
     except Exception as e:
-        print(f"Lỗi khi chạy báo cáo tự động: {e}")
+        print(f"❌ Lỗi xử lý: {e}")
 
 if __name__ == "__main__":
-    get_data_and_send()
+    send_report()
