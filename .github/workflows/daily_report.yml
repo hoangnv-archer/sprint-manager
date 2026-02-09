@@ -1,7 +1,7 @@
 name: Daily Sprint Report
 on:
   schedule:
-    - cron: '5 3 * * *' # 8:30 AM VN
+    - cron: '20 3 * * *' # Chạy lúc 10:20 AM giờ VN
   workflow_dispatch:
 
 jobs:
