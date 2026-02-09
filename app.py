@@ -12,18 +12,13 @@ def calculate_working_hours(start_dt, end_dt):
     total_seconds = 0
     curr = start_dt
     while curr.date() <= end_dt.date():
-        if curr.weekday() < 5: # Thứ 2 - Thứ 6
-            morn_s = datetime.combine(curr.date(), time(8, 30))
-            morn_e = datetime.combine(curr.date(), time(12, 0))
-            aft_s = datetime.combine(curr.date(), time(13, 30))
-            aft_e = datetime.combine(curr.date(), time(18, 0))
-            
+        if curr.weekday() < 5: 
+            morn_s, morn_e = datetime.combine(curr.date(), time(8, 30)), datetime.combine(curr.date(), time(12, 0))
+            aft_s, aft_e = datetime.combine(curr.date(), time(13, 30)), datetime.combine(curr.date(), time(18, 0))
             s_m, e_m = max(curr, morn_s), min(end_dt, morn_e)
             if s_m < e_m: total_seconds += (e_m - s_m).total_seconds()
-            
             s_a, e_a = max(curr, aft_s), min(end_dt, aft_e)
             if s_a < e_a: total_seconds += (e_a - s_a).total_seconds()
-            
         curr = (curr + timedelta(days=1)).replace(hour=8, minute=30, second=0)
     return total_seconds / 3600
 
@@ -39,20 +34,24 @@ try:
         df = conn.read(spreadsheet=URL, skiprows=header_idx)
         df.columns = [str(c).strip() for c in df.columns]
         
-        # Đảm bảo các cột cần thiết tồn tại
-        for c in ['Estimate Dev', 'Real', 'Start_time', 'State', 'PIC']:
-            if c not in df.columns: df[c] = 0 if c in ['Estimate Dev', 'Real'] else 'None'
+        # KIỂM TRA VÀ TẠO CỘT NẾU THIẾU (Tránh lỗi KeyError 'Start_time')
+        required_cols = ['Userstory/Todo', 'State', 'PIC', 'Estimate Dev', 'Real', 'Start_time']
+        for col in required_cols:
+            if col not in df.columns:
+                df[col] = 0 if col in ['Estimate Dev', 'Real'] else None
 
         # Xử lý định dạng
         df['Estimate Dev'] = pd.to_numeric(df['Estimate Dev'].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
         df['Real'] = pd.to_numeric(df['Real'].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
-        df['Start_time'] = pd.to_datetime(df['Start_time'], errors='coerce')
-        df['State_Clean'] = df['State'].fillna('None').str.strip().str.lower()
         
+        # ÉP KIỂU DATETIME CHO START_TIME
+        df['Start_time'] = pd.to_datetime(df['Start_time'], errors='coerce')
+        
+        df['State_Clean'] = df['State'].fillna('None').str.strip().str.lower()
         valid_pics = ['Tài', 'Dương', 'QA', 'Quân', 'Phú', 'Thịnh', 'Đô', 'Tùng', 'Anim', 'Thắng VFX']
         df_team = df[df['PIC'].isin(valid_pics)].copy()
 
-        # LOGIC CẢNH BÁO OVER ESTIMATE
+        # LOGIC CẢNH BÁO
         now = datetime.now()
         over_est_list = []
         for _, row in df_team.iterrows():
@@ -64,11 +63,12 @@ try:
 
         st.title("🚀 Sprint Workload & Performance")
 
+        # Hiển thị cảnh báo
         if over_est_list:
             st.warning(f"🚨 Có {len(over_est_list)} task đang vượt quá thời gian Estimate!")
             st.table(pd.DataFrame(over_est_list))
 
-        # --- TÍNH TOÁN STATS (GỒM CẢ PHẦN THIẾU) ---
+        # --- STATS ---
         pic_stats = df_team.groupby('PIC').agg(
             total_tasks=('Userstory/Todo', 'count'),
             done_tasks=('State_Clean', lambda x: x.isin(['done', 'cancel']).sum()),
@@ -77,8 +77,6 @@ try:
             active_real=('Real', 'sum'),
             total_est=('Estimate Dev', 'sum')
         ).reset_index()
-        
-        # Phần liệt kê số task còn lại
         pic_stats['pending_total'] = pic_stats['total_tasks'] - pic_stats['done_tasks']
         pic_stats['Progress_Task'] = (pic_stats['done_tasks'] / pic_stats['total_tasks'] * 100).fillna(0).round(1)
 
@@ -89,34 +87,31 @@ try:
             with cols[i % 5]:
                 st.markdown(f"### **{row['PIC']}**")
                 st.metric("Tiến độ", f"{row['Progress_Task']}%")
-                st.write(f"✅ Hoàn thành: **{int(row['done_tasks'])}**")
-                st.write(f"🚧 Đang làm: **{int(row['inprogress_tasks'])}**")
-                st.write(f"⏳ Chưa làm: **{int(row['none_tasks'])}**")
-                st.write(f"🚩 Còn lại: **{int(row['pending_total'])}** task") # Đã thêm lại dòng này
+                st.write(f"✅ Xong: {int(row['done_tasks'])} | 🚧 Đang làm: {int(row['inprogress_tasks'])}")
+                st.write(f"🚩 Còn lại: {int(row['pending_total'])} task")
                 st.progress(min(row['Progress_Task']/100, 1.0))
                 st.divider()
+
+        # --- CHI TIẾT DANH SÁCH (ĐÃ THÊM START_TIME VÀO ĐÂY) ---
+        st.subheader("📋 Chi tiết danh sách Task")
+        # Đảm bảo danh sách cột này khớp hoàn toàn với những gì bạn muốn thấy trên App
+        show_cols = ['Userstory/Todo', 'State', 'PIC', 'Estimate Dev', 'Real', 'Start_time']
+        st.dataframe(df_team[show_cols], use_container_width=True)
 
         # --- GỬI DISCORD ---
         st.sidebar.subheader("📢 Báo cáo Discord")
         webhook_url = st.sidebar.text_input("Webhook URL:", type="password")
         if st.sidebar.button("📤 Gửi báo cáo chi tiết"):
             if webhook_url:
-                msg = "📊 **SPRINT REPORT**\n━━━━━━━━━━━━━━━━━━━━━\n"
+                msg = "📊 **SPRINT REPORT**\n"
                 for _, r in pic_stats.iterrows():
-                    msg += f"👤 **{r['PIC']}** | `{r['Progress_Task']}%` Done\n"
-                    msg += f"• Còn lại: `{int(r['pending_total'])}` task\n" # Đã thêm lại vào Discord
-                
+                    msg += f"👤 **{r['PIC']}**: `{r['Progress_Task']}%` Done | Còn lại: `{int(r['pending_total'])}` task\n"
                 if over_est_list:
                     msg += "\n🚨 **CẢNH BÁO VƯỢT ESTIMATE**\n"
                     for item in over_est_list:
-                        msg += f"• {item['PIC']}: {item['Task']} (`{item['Actual']}h`/{item['Est']}h)\n" # Đã sửa lỗi thụt lề
-                
+                        msg += f"• {item['PIC']}: {item['Task']} (`{item['Actual']}h`/{item['Est']}h)\n" # Sửa lỗi thụt lề
                 requests.post(webhook_url, json={"content": msg})
-                st.sidebar.success("Đã gửi báo cáo!")
-
-        # --- BIỂU ĐỒ & DATA ---
-        st.plotly_chart(px.bar(pic_stats, x='PIC', y=['active_real', 'total_est'], barmode='group'), use_container_width=True)
-        st.dataframe(df_team[['Userstory/Todo', 'State', 'PIC', 'Estimate Dev', 'Start_time']], use_container_width=True)
+                st.sidebar.success("Đã gửi!")
 
     else:
         st.error("Không tìm thấy hàng tiêu đề 'Userstory/Todo'.")
