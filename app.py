@@ -29,7 +29,6 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 URL = "https://docs.google.com/spreadsheets/d/1llUlTDfR413oZelu-AoMsC0lEzHqXOkB4SCwc_4zmAo/edit?pli=1&gid=982443592#gid=982443592"
 
 try:
-    # Đọc dữ liệu thô để tìm header
     raw_df = conn.read(spreadsheet=URL, header=None, ttl=0)
     header_idx = next((i for i, row in raw_df.iterrows() if "Userstory/Todo" in row.values), None)
             
@@ -37,20 +36,45 @@ try:
         df = conn.read(spreadsheet=URL, skiprows=header_idx, ttl=0)
         df.columns = [str(c).strip() for c in df.columns]
         
-        # Sửa lỗi hiển thị Start_time: Đảm bảo cột tồn tại trong DataFrame
+        # Đảm bảo cột Start_time tồn tại để không bị lỗi hệ thống
         if 'Start_time' not in df.columns:
             df['Start_time'] = pd.NaT
 
-        # Xử lý định dạng số & thời gian
+        # Xử lý định dạng
         for col in ['Estimate Dev', 'Real']:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
         
         df['Start_time'] = pd.to_datetime(df['Start_time'], errors='coerce')
-        # Sửa lỗi dòng 56: Thêm ngoặc và chuẩn hóa
         df['State_Clean'] = df['State'].fillna('None').str.strip().str.lower()
         
         valid_pics = ['Tài', 'Dương', 'QA', 'Quân', 'Phú', 'Thịnh', 'Đô', 'Tùng', 'Anim', 'Thắng VFX']
         df_team = df[df['PIC'].isin(valid_pics)].copy()
 
-        # LOGIC
+        # --- 2. LOGIC CẢNH BÁO OVER ESTIMATE ---
+        now = datetime.now()
+        over_est_list = []
+        for _, row in df_team.iterrows():
+            if row['State_Clean'] == 'in progress' and not pd.isna(row['Start_time']):
+                actual = calculate_working_hours(row['Start_time'], now)
+                est = float(row['Estimate Dev'])
+                if est > 0 and actual > est:
+                    over_est_list.append({"PIC": row['PIC'], "Task": row['Userstory/Todo'], "Actual": round(actual, 1), "Est": est})
+
+        st.title("🚀 Sprint Workload & Performance")
+
+        if over_est_list:
+            st.warning(f"🚨 Có {len(over_est_list)} task đang vượt quá thời gian Estimate!")
+            st.table(pd.DataFrame(over_est_list))
+
+        # --- 3. TÍNH TOÁN STATS ---
+        pic_stats = df_team.groupby('PIC').agg(
+            total_tasks=('Userstory/Todo', 'count'),
+            done_tasks=('State_Clean', lambda x: x.isin(['done', 'cancel']).sum()),
+            inprogress_tasks=('State_Clean', lambda x: (x == 'in progress').sum()),
+            none_tasks=('State_Clean', lambda x: (x == 'none').sum()),
+            active_real=('Real', 'sum'),
+            total_est=('Estimate Dev', 'sum')
+        ).reset_index()
+        pic_stats['pending_total'] = pic_stats['total_tasks'] - pic_stats['done_tasks']
+        pic_stats['Progress_Task'] = (pic_stats['done_tasks'] / pic_
