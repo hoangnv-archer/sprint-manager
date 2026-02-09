@@ -5,7 +5,7 @@ import plotly.express as px
 import requests
 from datetime import datetime, time, timedelta
 
-# --- 1. HÀM TÍNH GIỜ LÀM VIỆC ---
+# --- HÀM TÍNH GIỜ LÀM VIỆC ---
 def calculate_working_hours(start_dt, end_dt):
     if pd.isna(start_dt) or start_dt > end_dt:
         return 0
@@ -27,93 +27,30 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 URL = "https://docs.google.com/spreadsheets/d/1llUlTDfR413oZelu-AoMsC0lEzHqXOkB4SCwc_4zmAo/edit?pli=1&gid=982443592#gid=982443592"
 
 try:
-    raw_df = conn.read(spreadsheet=URL, header=None)
+    # 1. Đọc dữ liệu (Tắt cache để cập nhật Start_time tức thì)
+    raw_df = conn.read(spreadsheet=URL, header=None, ttl=0) 
     header_idx = next((i for i, row in raw_df.iterrows() if "Userstory/Todo" in row.values), None)
             
     if header_idx is not None:
-        df = conn.read(spreadsheet=URL, skiprows=header_idx)
+        df = conn.read(spreadsheet=URL, skiprows=header_idx, ttl=0)
         df.columns = [str(c).strip() for c in df.columns]
         
-        # KIỂM TRA VÀ TẠO CỘT NẾU THIẾU (Tránh lỗi KeyError 'Start_time')
-        required_cols = ['Userstory/Todo', 'State', 'PIC', 'Estimate Dev', 'Real', 'Start_time']
-        for col in required_cols:
-            if col not in df.columns:
-                df[col] = 0 if col in ['Estimate Dev', 'Real'] else None
+        # KIỂM TRA TÊN CỘT THỰC TẾ (DEBUG)
+        # st.write("Danh sách cột hệ thống tìm thấy:", list(df.columns)) 
 
-        # Xử lý định dạng
-        df['Estimate Dev'] = pd.to_numeric(df['Estimate Dev'].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
-        df['Real'] = pd.to_numeric(df['Real'].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
+        # TỰ ĐỘNG KHỚP CỘT (Nếu bạn viết Start_Time hay start_time đều nhận)
+        col_map = {c.lower(): c for c in df.columns}
+        target_col = col_map.get('start_time')
         
-        # ÉP KIỂU DATETIME CHO START_TIME
+        if target_col:
+            df = df.rename(columns={target_col: 'Start_time'})
+        else:
+            df['Start_time'] = pd.NaT # Tạo cột trống nếu hoàn toàn không tìm thấy
+
+        # Xử lý định dạng số & ngày tháng
+        for col in ['Estimate Dev', 'Real']:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
+        
         df['Start_time'] = pd.to_datetime(df['Start_time'], errors='coerce')
-        
-        df['State_Clean'] = df['State'].fillna('None').str.strip().str.lower()
-        valid_pics = ['Tài', 'Dương', 'QA', 'Quân', 'Phú', 'Thịnh', 'Đô', 'Tùng', 'Anim', 'Thắng VFX']
-        df_team = df[df['PIC'].isin(valid_pics)].copy()
-
-        # LOGIC CẢNH BÁO
-        now = datetime.now()
-        over_est_list = []
-        for _, row in df_team.iterrows():
-            if row['State_Clean'] == 'in progress' and not pd.isna(row['Start_time']):
-                actual = calculate_working_hours(row['Start_time'], now)
-                est = float(row['Estimate Dev'])
-                if est > 0 and actual > est:
-                    over_est_list.append({"PIC": row['PIC'], "Task": row['Userstory/Todo'], "Actual": round(actual, 1), "Est": est})
-
-        st.title("🚀 Sprint Workload & Performance")
-
-        # Hiển thị cảnh báo
-        if over_est_list:
-            st.warning(f"🚨 Có {len(over_est_list)} task đang vượt quá thời gian Estimate!")
-            st.table(pd.DataFrame(over_est_list))
-
-        # --- STATS ---
-        pic_stats = df_team.groupby('PIC').agg(
-            total_tasks=('Userstory/Todo', 'count'),
-            done_tasks=('State_Clean', lambda x: x.isin(['done', 'cancel']).sum()),
-            inprogress_tasks=('State_Clean', lambda x: (x == 'in progress').sum()),
-            none_tasks=('State_Clean', lambda x: (x == 'none').sum()),
-            active_real=('Real', 'sum'),
-            total_est=('Estimate Dev', 'sum')
-        ).reset_index()
-        pic_stats['pending_total'] = pic_stats['total_tasks'] - pic_stats['done_tasks']
-        pic_stats['Progress_Task'] = (pic_stats['done_tasks'] / pic_stats['total_tasks'] * 100).fillna(0).round(1)
-
-        # --- HIỂN THỊ METRICS ---
-        st.subheader("👤 Trạng thái Task theo PIC")
-        cols = st.columns(5)
-        for i, row in pic_stats.iterrows():
-            with cols[i % 5]:
-                st.markdown(f"### **{row['PIC']}**")
-                st.metric("Tiến độ", f"{row['Progress_Task']}%")
-                st.write(f"✅ Xong: {int(row['done_tasks'])} | 🚧 Đang làm: {int(row['inprogress_tasks'])}")
-                st.write(f"🚩 Còn lại: {int(row['pending_total'])} task")
-                st.progress(min(row['Progress_Task']/100, 1.0))
-                st.divider()
-
-        # --- CHI TIẾT DANH SÁCH (ĐÃ THÊM START_TIME VÀO ĐÂY) ---
-        st.subheader("📋 Chi tiết danh sách Task")
-        # Đảm bảo danh sách cột này khớp hoàn toàn với những gì bạn muốn thấy trên App
-        show_cols = ['Userstory/Todo', 'State', 'PIC', 'Estimate Dev', 'Real', 'Start_time']
-        st.dataframe(df_team[show_cols], use_container_width=True)
-
-        # --- GỬI DISCORD ---
-        st.sidebar.subheader("📢 Báo cáo Discord")
-        webhook_url = st.sidebar.text_input("Webhook URL:", type="password")
-        if st.sidebar.button("📤 Gửi báo cáo chi tiết"):
-            if webhook_url:
-                msg = "📊 **SPRINT REPORT**\n"
-                for _, r in pic_stats.iterrows():
-                    msg += f"👤 **{r['PIC']}**: `{r['Progress_Task']}%` Done | Còn lại: `{int(r['pending_total'])}` task\n"
-                if over_est_list:
-                    msg += "\n🚨 **CẢNH BÁO VƯỢT ESTIMATE**\n"
-                    for item in over_est_list:
-                        msg += f"• {item['PIC']}: {item['Task']} (`{item['Actual']}h`/{item['Est']}h)\n" # Sửa lỗi thụt lề
-                requests.post(webhook_url, json={"content": msg})
-                st.sidebar.success("Đã gửi!")
-
-    else:
-        st.error("Không tìm thấy hàng tiêu đề 'Userstory/Todo'.")
-except Exception as e:
-    st.error(f"Lỗi hệ thống: {e}")
+        df['State_Clean'] = df['State'].fillna('None').str.strip
