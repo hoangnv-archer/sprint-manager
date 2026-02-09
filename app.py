@@ -5,34 +5,28 @@ import plotly.express as px
 import requests
 from datetime import datetime, timedelta, timezone
 
-# --- 1. THIẾT LẬP MÚI GIỜ VIỆT NAM ---
+# --- 1. CẤU HÌNH MÚI GIỜ VIỆT NAM ---
 VN_TZ = timezone(timedelta(hours=7))
 
 def calculate_actual_minutes(start_val):
-    """Tính chính xác số phút đã trôi qua từ Start_DT đến hiện tại"""
     if pd.isna(start_val) or str(start_val).lower() in ['none', '']:
         return 0
     try:
-        # Ép kiểu datetime và đảm bảo nhận diện đúng định dạng YYYY-MM-DD
-        start_dt = pd.to_datetime(start_val, errors='coerce')
-        if pd.isna(start_dt): return 0
-        
-        # Gán múi giờ VN
-        start_dt = start_dt.replace(tzinfo=VN_TZ)
+        # Chuyển đổi Start_DT sang datetime và gán múi giờ VN
+        start_dt = pd.to_datetime(start_val)
+        if start_dt.tzinfo is None:
+            start_dt = start_dt.replace(tzinfo=VN_TZ)
         now_vn = datetime.now(VN_TZ)
-        
-        # Tính toán khoảng cách
         diff = now_vn - start_dt
-        return diff.total_seconds() / 60  # Trả về số phút
+        return diff.total_seconds() / 60
     except:
         return 0
 
-st.set_page_config(page_title="Sprint Dashboard PRO", layout="wide")
+st.set_page_config(page_title="Sprint Analyzer Final", layout="wide")
 conn = st.connection("gsheets", type=GSheetsConnection)
 URL = "https://docs.google.com/spreadsheets/d/1llUlTDfR413oZelu-AoMsC0lEzHqXOkB4SCwc_4zmAo/edit?pli=1&gid=982443592#gid=982443592"
 
 try:
-    # 2. ĐỌC DỮ LIỆU
     df_raw = conn.read(spreadsheet=URL, header=None, ttl=0)
     header_idx = next((i for i, row in df_raw.iterrows() if "Userstory/Todo" in row.values), None)
             
@@ -40,44 +34,42 @@ try:
         df = conn.read(spreadsheet=URL, skiprows=header_idx, ttl=0)
         df.columns = [str(c).strip() for c in df.columns]
 
-        # Xử lý số (Dấu phẩy -> Dấu chấm)
+        # Xử lý số liệu (Dấu phẩy -> Dấu chấm)
         for col in ['Estimate Dev', 'Real']:
             if col in df.columns:
                 df[col] = df[col].astype(str).str.replace(',', '.').replace('None', '0')
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
-        # Xác định cột thời gian dựa trên ảnh của bạn
+        # Nhận diện cột thời gian
         t_col = 'Start_DT' if 'Start_DT' in df.columns else (next((c for c in df.columns if "start" in c.lower()), df.columns[8]))
-        
         df['State_Clean'] = df['State'].fillna('None').str.strip().str.lower()
+        
         valid_pics = ['Tài', 'Dương', 'QA', 'Quân', 'Phú', 'Thịnh', 'Đô', 'Tùng', 'Anim', 'Thắng VFX']
         df_team = df[df['PIC'].isin(valid_pics)].copy()
 
-        # --- 3. LOGIC CẢNH BÁO (TÍNH THEO PHÚT) ---
+        # --- 2. LOGIC CẢNH BÁO LỐ GIỜ ---
         over_est_list = []
         for _, row in df_team.iterrows():
             if 'progress' in row['State_Clean']:
                 actual_min = calculate_actual_minutes(row[t_col])
                 est_min = float(row['Estimate Dev']) * 60
-                
+                # Bắt lỗi 31 phút > 6 phút
                 if est_min > 0 and actual_min > est_min:
                     over_est_list.append({
-                        "PIC": row['PIC'], 
-                        "Task": row['Userstory/Todo'], 
-                        "Thực tế": f"{int(actual_min)} phút", 
-                        "Dự kiến": f"{int(est_min)} phút"
+                        "PIC": row['PIC'], "Task": row['Userstory/Todo'], 
+                        "Thực tế": f"{int(actual_min)}p", "Dự kiến": f"{int(est_min)}p"
                     })
 
-        st.title("🚀 Sprint Dashboard & Real-time Alert")
+        st.title("🚀 Sprint Workload Dashboard")
 
-        # HIỂN THỊ CẢNH BÁO
+        # Hiển thị Cảnh báo đỏ ngay trên đầu
         if over_est_list:
-            st.error("🚨 PHÁT HIỆN TASK VƯỢT GIỜ DỰ KIẾN!")
+            st.error(f"🚨 PHÁT HIỆN {len(over_est_list)} TASK VƯỢT GIỜ DỰ KIẾN!")
             st.table(pd.DataFrame(over_est_list))
         else:
-            st.success("✅ Mọi task In Progress đều ổn.")
+            st.success("✅ Mọi task In Progress đều trong tiến độ.")
 
-        # --- 4. KHÔI PHỤC TÍNH NĂNG CŨ ---
+        # --- 3. THỐNG KÊ ĐẦY ĐỦ PIC (GỒM TASK TỒN ĐỌNG) ---
         pic_stats = df_team.groupby('PIC').agg(
             total=('Userstory/Todo', 'count'),
             done=('State_Clean', lambda x: x.isin(['done', 'cancel']).sum()),
@@ -85,29 +77,32 @@ try:
             est_sum=('Estimate Dev', 'sum'),
             real_sum=('Real', 'sum')
         ).reset_index()
-        pic_stats['remain'] = pic_stats['total'] - pic_stats['done']
+        # Tính task còn tồn đọng = Tổng - Xong
+        pic_stats['pending'] = pic_stats['total'] - pic_stats['done']
         pic_stats['percent'] = (pic_stats['done'] / pic_stats['total'] * 100).fillna(0).round(1)
 
-        st.subheader("👤 Trạng thái PIC")
+        st.subheader("👤 Trạng thái theo PIC")
         cols = st.columns(5)
         for i, row in pic_stats.iterrows():
             with cols[i % 5]:
                 st.markdown(f"#### **{row['PIC']}**")
-                st.metric("Tiến độ", f"{row['percent']}%")
-                st.write(f"✅ Xong: {int(row['done'])} | 🚧 Làm: {int(row['doing'])}")
+                st.metric("Hoàn thành", f"{row['percent']}%")
+                st.write(f"✅ Xong: {int(row['done'])} | 🚧 Đang làm: {int(row['doing'])}")
+                st.write(f"⏳ **Tồn đọng: {int(row['pending'])} task**") # Task chưa xong
                 st.progress(min(row['percent']/100, 1.0))
+                st.divider()
 
-        # Biểu đồ so sánh
-        st.plotly_chart(px.bar(pic_stats, x='PIC', y=['est_sum', 'real_sum'], barmode='group', title="So sánh Estimate vs Real (Giờ)"), use_container_width=True)
+        # Biểu đồ so sánh thời gian (Tính năng cũ)
+        st.plotly_chart(px.bar(pic_stats, x='PIC', y=['est_sum', 'real_sum'], barmode='group', title="Estimate vs Real (h)"), use_container_width=True)
 
-        # 5. GỬI DISCORD
+        # --- 4. GỬI DISCORD ---
         st.sidebar.subheader("📢 Discord Report")
         webhook_url = st.sidebar.text_input("Webhook URL:", type="password")
-        if st.sidebar.button("📤 Gửi báo cáo chi tiết"):
+        if st.sidebar.button("📤 Gửi báo cáo"):
             if webhook_url:
                 msg = "📊 **SPRINT REPORT**\n"
                 for _, r in pic_stats.iterrows():
-                    msg += f"👤 **{r['PIC']}**: `{r['percent']}%` (Còn {int(r['remain'])} task)\n"
+                    msg += f"👤 **{r['PIC']}**: `{r['percent']}%` (Tồn: {int(r['pending'])})\n"
                 if over_est_list:
                     msg += "\n🚨 **CẢNH BÁO LỐ GIỜ:**\n"
                     for item in over_est_list:
@@ -115,7 +110,6 @@ try:
                 requests.post(webhook_url, json={"content": msg})
                 st.sidebar.success("Đã gửi!")
 
-        # 6. BẢNG CHI TIẾT
         st.subheader("📋 Chi tiết danh sách Task")
         st.dataframe(df_team[['Userstory/Todo', 'State', 'PIC', 'Estimate Dev', 'Real', t_col]], use_container_width=True)
 
