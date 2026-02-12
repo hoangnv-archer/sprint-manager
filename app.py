@@ -12,24 +12,27 @@ def get_actual_hours(start_val):
     if pd.isna(start_val) or str(start_val).strip().lower() in ['none', '', 'nat', 'nan']:
         return 0
     try:
-        # Chuyển đổi giá trị từ Sheet sang datetime
+        # Ép kiểu datetime và xử lý nếu chỉ nhập mỗi Giờ mà thiếu Ngày
         start_dt = pd.to_datetime(start_val, errors='coerce')
         if pd.isna(start_dt):
             return 0
             
+        # Nếu người dùng chỉ nhập "10:30", Python sẽ tự gán năm 1900. 
+        # Chúng ta phải ép nó về ngày hôm nay.
+        now_vn = datetime.now(VN_TZ)
+        if start_dt.year < 2000: 
+            start_dt = start_dt.replace(year=now_vn.year, month=now_vn.month, day=now_vn.day)
+
         if start_dt.tzinfo is None:
             start_dt = start_dt.replace(tzinfo=VN_TZ)
         
-        now_vn = datetime.now(VN_TZ)
         diff = now_vn - start_dt
-        
-        # Trả về số giờ thực tế đã trôi qua (số thập phân)
         actual_h = diff.total_seconds() / 3600
         return max(0, actual_h) 
     except:
         return 0
 
-# --- 2. CẤU HÌNH CÁC DỰ ÁN ---
+# --- 2. CẤU HÌNH ---
 PROJECTS = {
     "Sprint Team 2": {
         "url": "https://docs.google.com/spreadsheets/d/1hentY_r7GNVwJWM3wLT7LsA3PrXQidWnYahkfSwR9Kw/edit?pli=1&gid=982443592#gid=982443592",
@@ -46,16 +49,15 @@ PROJECTS = {
     }
 }
 
-st.set_page_config(page_title="Multi-Project Dashboard", layout="wide")
+st.set_page_config(page_title="Sprint Dashboard", layout="wide")
 
 if 'selected_project' not in st.session_state:
     st.session_state.selected_project = list(PROJECTS.keys())[0]
 
-st.sidebar.title("📁 Danh sách dự án")
-
+# --- SIDEBAR ---
 for project_name in PROJECTS.keys():
-    btn_type = "primary" if st.session_state.selected_project == project_name else "secondary"
-    if st.sidebar.button(project_name, use_container_width=True, type=btn_type):
+    if st.sidebar.button(project_name, use_container_width=True, 
+                         type="primary" if st.session_state.selected_project == project_name else "secondary"):
         st.session_state.selected_project = project_name
         st.rerun()
 
@@ -70,86 +72,60 @@ try:
         df = conn.read(spreadsheet=config['url'], skiprows=header_idx, ttl=0)
         df.columns = [str(c).strip() for c in df.columns]
 
-        # Chuẩn hóa số (Đơn vị: Giờ)
+        # Ép kiểu số cho Estimate (Đơn vị: GIỜ)
         for col in ['Estimate Dev', 'Real']:
             if col in df.columns:
-                df[col] = df[col].astype(str).str.replace(',', '.').str.replace('None', '0').str.strip()
+                df[col] = df[col].astype(str).str.replace(',', '.').str.replace('None', '0')
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
         t_col = next((c for c in df.columns if "start" in c.lower()), None)
-        df['State_Clean'] = df['State'].fillna('None').str.strip().str.lower()
+        df['State_Clean'] = df['State'].fillna('').str.strip().str.lower()
         df_team = df[df['PIC'].isin(config['pics'])].copy()
 
-        # --- LOGIC CẢNH BÁO LỐ GIỜ (ĐÃ FIX THEO ĐƠN VỊ GIỜ) ---
+        # --- KIỂM TRA LỐ GIỜ ---
         over_est_list = []
         if t_col:
             for _, row in df_team.iterrows():
-                if 'progress' in str(row['State_Clean']):
+                # Kiểm tra trạng thái chứa chữ "progress"
+                if 'progress' in row['State_Clean']:
                     actual_h = get_actual_hours(row[t_col])
                     est_h = float(row['Estimate Dev'])
                     
-                    # So sánh trực tiếp số giờ
+                    # Nếu thực tế trôi qua > dự kiến (đơn vị giờ)
                     if est_h > 0 and actual_h > est_h:
                         over_est_list.append({
                             "PIC": row['PIC'], 
                             "Task": row['Userstory/Todo'], 
-                            "Thực tế": f"{round(actual_h, 2)}h ({round(actual_h * 60)}p)", 
-                            "Dự kiến": f"{round(est_h, 2)}h ({round(est_h * 60)}p)",
-                            "Vượt": f"{round((actual_h - est_h) * 60)} phút"
+                            "Thực tế": f"{round(actual_h, 2)}h", 
+                            "Dự kiến": f"{round(est_h, 2)}h",
+                            "Vượt": f"{round((actual_h - est_h)*60)} phút"
                         })
 
         st.title(f"🚀 {st.session_state.selected_project}")
 
+        # Hiển thị thông báo đỏ
         if over_est_list:
             st.error(f"🚨 PHÁT HIỆN {len(over_est_list)} TASK LÀM QUÁ GIỜ DỰ KIẾN!")
             st.table(pd.DataFrame(over_est_list))
+        else:
+            st.success("✅ Không có task nào bị lố giờ hoặc chưa điền Start-time.")
 
-        # --- PHẦN THỐNG KÊ BIỂU ĐỒ & BÁO CÁO (GIỮ NGUYÊN) ---
+        # --- DASHBOARD TRỰC QUAN ---
         pic_stats = df_team.groupby('PIC').agg(
-            total=('Userstory/Todo', 'count'),
             done=('State_Clean', lambda x: x.isin(['done', 'cancel', 'dev done']).sum()),
-            doing=('State_Clean', lambda x: x.str.contains('progress').sum()),
-            est_total=('Estimate Dev', 'sum'),
-            real_total=('Real', 'sum')
+            total=('Userstory/Todo', 'count')
         ).reset_index()
-        
-        pic_stats['pending'] = pic_stats['total'] - pic_stats['done']
         pic_stats['percent'] = (pic_stats['done'] / pic_stats['total'] * 100).fillna(0).round(1)
 
-        # Hiển thị Metrics
-        cols = st.columns(5)
+        cols = st.columns(len(pic_stats))
         for i, row in pic_stats.iterrows():
-            with cols[i % 5]:
-                st.metric(row['PIC'], f"{row['percent']}%")
-                st.write(f"✅ {int(row['done'])} | 🚧 {int(row['doing'])} | ⏳ Tồn: {int(row['pending'])}")
-                st.progress(min(row['percent']/100, 1.0))
+            cols[i].metric(row['PIC'], f"{row['percent']}%")
+            cols[i].progress(row['percent']/100)
 
-        st.plotly_chart(px.bar(pic_stats, x='PIC', y=['est_total', 'real_total'], barmode='group', title="So sánh Giờ Dự kiến vs Thực tế (Hours)"), use_container_width=True)
-
-        # --- GỬI BÁO CÁO NHANH ---
-        st.sidebar.divider()
-        if st.sidebar.button(f"📤 Gửi báo cáo {config['platform']}"):
-            msg = f"📊 **REPORT: {st.session_state.selected_project}**\n"
-            for _, r in pic_stats.iterrows():
-                msg += f"👤 {r['PIC']}: {r['percent']}% (Tồn: {int(r['pending'])})\n"
-            
-            if over_est_list:
-                msg += "\n🚨 **CẢNH BÁO LỐ GIỜ:**\n"
-                for item in over_est_list:
-                    msg += f"🔥 {item['PIC']}: {item['Task']} (Lố {item['Vượt']})\n"
-
-            if config['platform'] == "Discord":
-                webhook_url = "DÁN_WEBHOOK_VÀO_ĐÂY_HOẶC_DÙNG_INPUT" # Có thể dùng st.sidebar.text_input
-                requests.post(webhook_url, json={"content": msg})
-            else:
-                url_tg = f"https://api.telegram.org/bot{config['bot_token']}/sendMessage"
-                requests.post(url_tg, json={"chat_id": config['chat_id'], "text": msg, "parse_mode": "HTML"})
-            st.sidebar.success("Đã gửi!")
-
-        st.subheader("📋 Chi tiết danh sách Task")
-        st.dataframe(df_team[['Userstory/Todo', 'State', 'PIC', 'Estimate Dev', 'Real', t_col]], use_container_width=True)
+        st.subheader("📋 Chi tiết bảng dữ liệu")
+        st.dataframe(df_team, use_container_width=True)
 
     else:
-        st.error("Không tìm thấy hàng tiêu đề 'Userstory/Todo'.")
+        st.error("Không tìm thấy tiêu đề 'Userstory/Todo'.")
 except Exception as e:
-    st.error(f"Lỗi hệ thống: {e}")
+    st.error(f"Lỗi: {e}")
