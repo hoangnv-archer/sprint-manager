@@ -9,15 +9,20 @@ from datetime import datetime, timezone, timedelta
 VN_TZ = timezone(timedelta(hours=7))
 
 def get_actual_hours(start_val):
-    if pd.isna(start_val) or str(start_val).strip().lower() in ['none', '', 'nat']:
+    if pd.isna(start_val) or str(start_val).strip().lower() in ['none', '', 'nat', 'nan']:
         return 0
     try:
-        start_dt = pd.to_datetime(start_val)
+        # Ép kiểu datetime một cách linh hoạt hơn
+        start_dt = pd.to_datetime(start_val, errors='coerce')
+        if pd.isna(start_dt):
+            return 0
+            
         if start_dt.tzinfo is None:
             start_dt = start_dt.replace(tzinfo=VN_TZ)
+        
         now_vn = datetime.now(VN_TZ)
         diff = now_vn - start_dt
-        return diff.total_seconds() / 3600 
+        return max(0, diff.total_seconds() / 3600) # Đảm bảo không ra số âm
     except:
         return 0
 
@@ -40,7 +45,6 @@ PROJECTS = {
 
 st.set_page_config(page_title="Multi-Project Dashboard", layout="wide")
 
-# --- 3. QUẢN LÝ TRẠNG THÁI CHỌN DỰ ÁN BẰNG BUTTON ---
 if 'selected_project' not in st.session_state:
     st.session_state.selected_project = list(PROJECTS.keys())[0]
 
@@ -54,36 +58,34 @@ for project_name in PROJECTS.keys():
 
 config = PROJECTS[st.session_state.selected_project]
 
-# --- 4. KẾT NỐI VÀ XỬ LÝ DỮ LIỆU ---
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
     df_raw = conn.read(spreadsheet=config['url'], header=None, ttl=0)
-    
     header_idx = next((i for i, row in df_raw.iterrows() if "Userstory/Todo" in row.values), None)
             
     if header_idx is not None:
         df = conn.read(spreadsheet=config['url'], skiprows=header_idx, ttl=0)
         df.columns = [str(c).strip() for c in df.columns]
 
-        # Chuẩn hóa số
+        # Chuẩn hóa số linh hoạt hơn
         for col in ['Estimate Dev', 'Real']:
             if col in df.columns:
-                df[col] = df[col].astype(str).str.replace(',', '.').replace('None', '0')
+                df[col] = df[col].astype(str).str.replace(',', '.').str.replace('None', '0').str.strip()
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
         t_col = next((c for c in df.columns if "start" in c.lower()), None)
         df['State_Clean'] = df['State'].fillna('None').str.strip().str.lower()
         df_team = df[df['PIC'].isin(config['pics'])].copy()
-        st.write(f"Cột thời gian tìm thấy: {t_col}")
-        st.write(df_team[[t_col, 'State_Clean', 'Estimate Dev']].head())
 
-        # --- LOGIC CẢNH BÁO LỐ GIỜ ---
+        # --- LOGIC CẢNH BÁO LỐ GIỜ (ĐÃ FIX) ---
         over_est_list = []
         if t_col:
             for _, row in df_team.iterrows():
-                if 'progress' in row['State_Clean']:
+                # Kiểm tra nếu trạng thái chứa chữ 'progress'
+                if 'progress' in str(row['State_Clean']):
                     actual_h = get_actual_hours(row[t_col])
                     est_h = float(row['Estimate Dev'])
+                    
                     if est_h > 0 and actual_h > est_h:
                         over_est_list.append({
                             "PIC": row['PIC'], 
@@ -94,12 +96,19 @@ try:
                         })
 
         st.title(f"🚀 {st.session_state.selected_project}")
+        
+        # Chỉ hiện Debug khi cần thiết, bạn có thể comment lại sau
+        with st.expander("🛠 Debug Dữ liệu Thời gian"):
+            st.write(f"Cột thời gian tìm thấy: `{t_col}`")
+            st.write(df_team[[t_col, 'State_Clean', 'Estimate Dev']].head())
 
         if over_est_list:
             st.error(f"🚨 PHÁT HIỆN {len(over_est_list)} TASK LÀM QUÁ GIỜ DỰ KIẾN!")
             st.table(pd.DataFrame(over_est_list))
+        elif t_col:
+            st.info("✅ Hiện tại không có task nào bị lố giờ.")
 
-        # THỐNG KÊ
+        # --- THỐNG KÊ & BIỂU ĐỒ ---
         pic_stats = df_team.groupby('PIC').agg(
             total=('Userstory/Todo', 'count'),
             done=('State_Clean', lambda x: x.isin(['done', 'cancel', 'dev done']).sum()),
@@ -124,7 +133,7 @@ try:
 
         st.plotly_chart(px.bar(pic_stats, x='PIC', y=['est_total', 'real_total'], barmode='group'), use_container_width=True)
 
-        # --- GỬI BÁO CÁO (BAO GỒM CẢNH BÁO LỐ GIỜ) ---
+        # --- GỬI BÁO CÁO NHANH ---
         st.sidebar.divider()
         st.sidebar.subheader(f"📢 Gửi báo cáo nhanh")
         
@@ -135,12 +144,10 @@ try:
                     msg = f"📊 **REPORT: {st.session_state.selected_project}**\n"
                     for _, r in pic_stats.iterrows():
                         msg += f"👤 **{r['PIC']}**: `{r['percent']}%` (Tồn: {int(r['pending'])})\n"
-                    
                     if over_est_list:
                         msg += "\n🚨 **CẢNH BÁO LỐ GIỜ:**\n"
                         for item in over_est_list:
                             msg += f"🔥 `{item['PIC']}`: {item['Task']} (Lố {item['Vượt']})\n"
-                            
                     requests.post(webhook_url, json={"content": msg})
                     st.sidebar.success("Đã gửi Discord!")
         else:
@@ -148,19 +155,12 @@ try:
                 msg = f"<b>📊 REPORT: {st.session_state.selected_project}</b>\n"
                 for _, r in pic_stats.iterrows():
                     msg += f"• {r['PIC']}: <b>{r['percent']}%</b> (Tồn: {int(r['pending'])})\n"
-                
                 if over_est_list:
                     msg += "\n🚨 <b>CẢNH BÁO LỐ GIỜ:</b>\n"
                     for item in over_est_list:
                         msg += f"• ⚠️ <b>{item['PIC']}</b> lố {item['Vượt']}: <i>{item['Task']}</i>\n"
-
                 url_tg = f"https://api.telegram.org/bot{config['bot_token']}/sendMessage"
-                payload = {
-                    "chat_id": config['chat_id'], 
-                    "message_thread_id": config['topic_id'], 
-                    "text": msg, 
-                    "parse_mode": "HTML"
-                }
+                payload = {"chat_id": config['chat_id'], "message_thread_id": config['topic_id'], "text": msg, "parse_mode": "HTML"}
                 requests.post(url_tg, json=payload)
                 st.sidebar.success("Đã gửi Telegram!")
 
