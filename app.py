@@ -23,7 +23,7 @@ def get_actual_hours(start_val):
 
 # --- 2. CẤU HÌNH CÁC DỰ ÁN ---
 PROJECTS = {
-    "Sprint Team 2 (Dự án 1)": {
+    "Sprint Team 2": {
         "url": "https://docs.google.com/spreadsheets/d/1hentY_r7GNVwJWM3wLT7LsA3PrXQidWnYahkfSwR9Kw/edit?pli=1&gid=982443592#gid=982443592",
         "pics": ['Chuân', 'Việt', 'Thắng', 'QA', 'Mai', 'Hải Anh', 'Thuật', 'Hiếu'],
         "platform": "Telegram",
@@ -31,19 +31,30 @@ PROJECTS = {
         "chat_id": "-1002102856307",
         "topic_id": 18251
     },
-    "Sprint Dashboard Final (Dự án mới)": {
+    "Sprint Dashboard Final": {
         "url": "https://docs.google.com/spreadsheets/d/1llUlTDfR413oZelu-AoMsC0lEzHqXOkB4SCwc_4zmAo/edit?pli=1&gid=982443592#gid=982443592",
         "pics": ['Tài', 'Dương', 'QA', 'Quân', 'Phú', 'Thịnh', 'Đô', 'Tùng', 'Anim', 'Thắng VFX'],
         "platform": "Discord"
     }
 }
 
-st.set_page_config(page_title="Multi-Project Sprint Dashboard", layout="wide")
+st.set_page_config(page_title="Multi-Project Dashboard", layout="wide")
 
-# --- 3. SIDEBAR CHỌN DỰ ÁN ---
-st.sidebar.title("📁 Quản lý dự án")
-selected_p = st.sidebar.selectbox("Chọn dự án muốn xem:", list(PROJECTS.keys()))
-config = PROJECTS[selected_p]
+# --- 3. QUẢN LÝ TRẠNG THÁI CHỌN DỰ ÁN BẰNG BUTTON ---
+if 'selected_project' not in st.session_state:
+    st.session_state.selected_project = list(PROJECTS.keys())[0]
+
+st.sidebar.title("📁 Danh sách dự án")
+
+# Tạo các nút bấm thay thế listbox
+for project_name in PROJECTS.keys():
+    # Highlight nút đang được chọn bằng cách thay đổi kiểu hiển thị (type)
+    btn_type = "primary" if st.session_state.selected_project == project_name else "secondary"
+    if st.sidebar.button(project_name, use_container_width=True, type=btn_type):
+        st.session_state.selected_project = project_name
+        st.rerun() # Tải lại trang để cập nhật dữ liệu mới
+
+config = PROJECTS[st.session_state.selected_project]
 
 # --- 4. KẾT NỐI VÀ XỬ LÝ DỮ LIỆU ---
 try:
@@ -62,7 +73,6 @@ try:
                 df[col] = df[col].astype(str).str.replace(',', '.').replace('None', '0')
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
-        # CỘT THỜI GIAN
         t_col = next((c for c in df.columns if "start" in c.lower()), None)
         df['State_Clean'] = df['State'].fillna('None').str.strip().str.lower()
         df_team = df[df['PIC'].isin(config['pics'])].copy()
@@ -76,20 +86,17 @@ try:
                     est_h = float(row['Estimate Dev'])
                     if est_h > 0 and actual_h > est_h:
                         over_est_list.append({
-                            "PIC": row['PIC'], 
-                            "Task": row['Userstory/Todo'], 
-                            "Thực tế": f"{round(actual_h * 60)}p", 
-                            "Dự kiến": f"{round(est_h * 60)}p"
+                            "PIC": row['PIC'], "Task": row['Userstory/Todo'], 
+                            "Thực tế": f"{round(actual_h * 60)}p", "Dự kiến": f"{round(est_h * 60)}p"
                         })
 
-        st.title(f"🚀 {selected_p}")
+        st.title(f"🚀 {st.session_state.selected_project}")
 
-        # Hiển thị bảng cảnh báo
         if over_est_list:
             st.error(f"🚨 PHÁT HIỆN {len(over_est_list)} TASK LÀM QUÁ GIỜ DỰ KIẾN!")
             st.table(pd.DataFrame(over_est_list))
 
-        # THỐNG KÊ PIC
+        # THỐNG KÊ
         pic_stats = df_team.groupby('PIC').agg(
             total=('Userstory/Todo', 'count'),
             done=('State_Clean', lambda x: x.isin(['done', 'cancel', 'dev done']).sum()),
@@ -101,7 +108,6 @@ try:
         pic_stats['pending'] = pic_stats['total'] - pic_stats['done']
         pic_stats['percent'] = (pic_stats['done'] / pic_stats['total'] * 100).fillna(0).round(1)
 
-        # Hiển thị Metric
         st.subheader("👤 Trạng thái chi tiết từng PIC")
         cols = st.columns(5)
         for i, row in pic_stats.iterrows():
@@ -115,44 +121,33 @@ try:
 
         st.plotly_chart(px.bar(pic_stats, x='PIC', y=['est_total', 'real_total'], barmode='group'), use_container_width=True)
 
-        # --- 5. GỬI BÁO CÁO (DISCORD HOẶC TELEGRAM) ---
+        # --- GỬI BÁO CÁO ---
         st.sidebar.divider()
-        st.sidebar.subheader(f"📢 Gửi qua {config['platform']}")
+        st.sidebar.subheader(f"📢 Gửi báo cáo nhanh")
         
         if config['platform'] == "Discord":
-            webhook_url = st.sidebar.text_input("Webhook URL Dự án mới:", type="password")
-            if st.sidebar.button("📤 Gửi báo cáo Discord"):
+            webhook_url = st.sidebar.text_input("Webhook URL (Discord):", type="password")
+            if st.sidebar.button("📤 Bắn báo cáo Discord"):
                 if webhook_url:
-                    msg = f"📊 **REPORT: {selected_p}**\n"
+                    msg = f"📊 **REPORT: {st.session_state.selected_project}**\n"
                     for _, r in pic_stats.iterrows():
                         msg += f"👤 **{r['PIC']}**: `{r['percent']}%` (Tồn: {int(r['pending'])})\n"
-                    if over_est_list:
-                        msg += "\n🚨 **LỐ GIỜ:** " + ", ".join([f"{i['PIC']}({i['Thực tế']})" for i in over_est_list])
                     requests.post(webhook_url, json={"content": msg})
-                    st.sidebar.success("Đã gửi Discord!")
-        
-        else: # Telegram cho Team 2
-            if st.sidebar.button("📤 Gửi báo cáo Telegram"):
-                msg = f"<b>📊 REPORT: {selected_p}</b>\n"
+                    st.sidebar.success("Đã gửi!")
+        else:
+            if st.sidebar.button("📤 Bắn báo cáo Telegram"):
+                msg = f"<b>📊 REPORT: {st.session_state.selected_project}</b>\n"
                 for _, r in pic_stats.iterrows():
                     msg += f"• {r['PIC']}: <b>{r['percent']}%</b> (Tồn: {int(r['pending'])})\n"
-                
                 url_tg = f"https://api.telegram.org/bot{config['bot_token']}/sendMessage"
-                payload = {
-                    "chat_id": config['chat_id'], 
-                    "message_thread_id": config['topic_id'],
-                    "text": msg, "parse_mode": "HTML"
-                }
+                payload = {"chat_id": config['chat_id'], "message_thread_id": config['topic_id'], "text": msg, "parse_mode": "HTML"}
                 requests.post(url_tg, json=payload)
-                st.sidebar.success("Đã gửi Telegram!")
+                st.sidebar.success("Đã gửi!")
 
-        # Bảng chi tiết
         st.subheader("📋 Bảng chi tiết Task")
-        show_cols = ['Userstory/Todo', 'State', 'PIC', 'Estimate Dev', 'Real']
-        if t_col: show_cols.append(t_col)
-        st.dataframe(df_team[show_cols], use_container_width=True)
+        st.dataframe(df_team[['Userstory/Todo', 'State', 'PIC', 'Estimate Dev', 'Real']], use_container_width=True)
 
     else:
-        st.error("Lỗi: Không tìm thấy hàng tiêu đề 'Userstory/Todo' trong Sheet này.")
+        st.error("Không tìm thấy hàng tiêu đề.")
 except Exception as e:
-    st.error(f"Lỗi hệ thống: {e}")
+    st.error(f"Lỗi: {e}")
