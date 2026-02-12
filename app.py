@@ -74,6 +74,8 @@ try:
         t_col = next((c for c in df.columns if "start" in c.lower()), None)
         df['State_Clean'] = df['State'].fillna('None').str.strip().str.lower()
         df_team = df[df['PIC'].isin(config['pics'])].copy()
+        st.write(f"Cột thời gian tìm thấy: {t_col}")
+        st.write(df_team[[t_col, 'State_Clean', 'Estimate Dev']].head())
 
         # --- LOGIC CẢNH BÁO LỐ GIỜ ---
         over_est_list = []
