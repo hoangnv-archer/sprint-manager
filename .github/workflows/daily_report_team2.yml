@@ -1,0 +1,26 @@
+name: Auto Send Telegram Report
+
+on:
+  schedule:
+    # 8:30 VN = 1:30 UTC
+    - cron: '30 23 * * *'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          pip install pandas requests
+
+      - name: Run script
+        run: python send_tele_team2.py
