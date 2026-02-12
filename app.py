@@ -46,13 +46,11 @@ if 'selected_project' not in st.session_state:
 
 st.sidebar.title("📁 Danh sách dự án")
 
-# Tạo các nút bấm thay thế listbox
 for project_name in PROJECTS.keys():
-    # Highlight nút đang được chọn bằng cách thay đổi kiểu hiển thị (type)
     btn_type = "primary" if st.session_state.selected_project == project_name else "secondary"
     if st.sidebar.button(project_name, use_container_width=True, type=btn_type):
         st.session_state.selected_project = project_name
-        st.rerun() # Tải lại trang để cập nhật dữ liệu mới
+        st.rerun()
 
 config = PROJECTS[st.session_state.selected_project]
 
@@ -77,7 +75,7 @@ try:
         df['State_Clean'] = df['State'].fillna('None').str.strip().str.lower()
         df_team = df[df['PIC'].isin(config['pics'])].copy()
 
-        # LOGIC CẢNH BÁO LỐ GIỜ
+        # --- LOGIC CẢNH BÁO LỐ GIỜ ---
         over_est_list = []
         if t_col:
             for _, row in df_team.iterrows():
@@ -86,8 +84,11 @@ try:
                     est_h = float(row['Estimate Dev'])
                     if est_h > 0 and actual_h > est_h:
                         over_est_list.append({
-                            "PIC": row['PIC'], "Task": row['Userstory/Todo'], 
-                            "Thực tế": f"{round(actual_h * 60)}p", "Dự kiến": f"{round(est_h * 60)}p"
+                            "PIC": row['PIC'], 
+                            "Task": row['Userstory/Todo'], 
+                            "Thực tế": f"{round(actual_h * 60)}p", 
+                            "Dự kiến": f"{round(est_h * 60)}p",
+                            "Vượt": f"{round((actual_h - est_h) * 60)}p"
                         })
 
         st.title(f"🚀 {st.session_state.selected_project}")
@@ -121,7 +122,7 @@ try:
 
         st.plotly_chart(px.bar(pic_stats, x='PIC', y=['est_total', 'real_total'], barmode='group'), use_container_width=True)
 
-        # --- GỬI BÁO CÁO ---
+        # --- GỬI BÁO CÁO (BAO GỒM CẢNH BÁO LỐ GIỜ) ---
         st.sidebar.divider()
         st.sidebar.subheader(f"📢 Gửi báo cáo nhanh")
         
@@ -132,17 +133,34 @@ try:
                     msg = f"📊 **REPORT: {st.session_state.selected_project}**\n"
                     for _, r in pic_stats.iterrows():
                         msg += f"👤 **{r['PIC']}**: `{r['percent']}%` (Tồn: {int(r['pending'])})\n"
+                    
+                    if over_est_list:
+                        msg += "\n🚨 **CẢNH BÁO LỐ GIỜ:**\n"
+                        for item in over_est_list:
+                            msg += f"🔥 `{item['PIC']}`: {item['Task']} (Lố {item['Vượt']})\n"
+                            
                     requests.post(webhook_url, json={"content": msg})
-                    st.sidebar.success("Đã gửi!")
+                    st.sidebar.success("Đã gửi Discord!")
         else:
             if st.sidebar.button("📤 Bắn báo cáo Telegram"):
                 msg = f"<b>📊 REPORT: {st.session_state.selected_project}</b>\n"
                 for _, r in pic_stats.iterrows():
                     msg += f"• {r['PIC']}: <b>{r['percent']}%</b> (Tồn: {int(r['pending'])})\n"
+                
+                if over_est_list:
+                    msg += "\n🚨 <b>CẢNH BÁO LỐ GIỜ:</b>\n"
+                    for item in over_est_list:
+                        msg += f"• ⚠️ <b>{item['PIC']}</b> lố {item['Vượt']}: <i>{item['Task']}</i>\n"
+
                 url_tg = f"https://api.telegram.org/bot{config['bot_token']}/sendMessage"
-                payload = {"chat_id": config['chat_id'], "message_thread_id": config['topic_id'], "text": msg, "parse_mode": "HTML"}
+                payload = {
+                    "chat_id": config['chat_id'], 
+                    "message_thread_id": config['topic_id'], 
+                    "text": msg, 
+                    "parse_mode": "HTML"
+                }
                 requests.post(url_tg, json=payload)
-                st.sidebar.success("Đã gửi!")
+                st.sidebar.success("Đã gửi Telegram!")
 
         st.subheader("📋 Bảng chi tiết Task")
         st.dataframe(df_team[['Userstory/Todo', 'State', 'PIC', 'Estimate Dev', 'Real']], use_container_width=True)
