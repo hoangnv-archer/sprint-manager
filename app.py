@@ -43,25 +43,25 @@ PROJECTS = {
         "chat_id": "-1002102856307",
         "topic_id": 18251,
         "sprint_start_date": "2026-02-09", 
-        "base_sprint_no": 31  # <--- Bắt đầu từ 31              
+        "base_sprint_no": 31                
     },
     "Sprint Team Debuffer": {
         "url": "https://docs.google.com/spreadsheets/d/1llUlTDfR413oZelu-AoMsC0lEzHqXOkB4SCwc_4zmAo/edit?pli=1&gid=982443592#gid=982443592",
         "pics": ['Tài', 'Dương', 'QA', 'Quân', 'Phú', 'Thịnh', 'Đô', 'Tùng', 'Anim', 'Thắng VFX'],
         "platform": "Discord",
-        "webhook_url": "YOUR_DISCORD_WEBHOOK_URL", # Dán link Discord vào đây
+        "webhook_url": "YOUR_DISCORD_WEBHOOK_URL",
         "sprint_start_date": "2026-02-16", 
-        "base_sprint_no": 6   # <--- Bắt đầu từ 6
+        "base_sprint_no": 6
     }
 }
 
-st.set_page_config(page_title="Multi-Project Dashboard", layout="wide")
+st.set_page_config(page_title="Sprint Monitoring Tool", layout="wide")
 
 if 'selected_project' not in st.session_state:
     st.session_state.selected_project = list(PROJECTS.keys())[0]
 
 # --- 3. SIDEBAR ---
-st.sidebar.title("📁 Danh sách dự án")
+st.sidebar.title("📁 Quản lý dự án")
 for project_name, p_config in PROJECTS.items():
     s_no, s_start, s_end = get_current_sprint_info(p_config)
     btn_type = "primary" if st.session_state.selected_project == project_name else "secondary"
@@ -91,9 +91,9 @@ try:
 
         df_team = df[df['PIC'].isin(config['pics'])].copy()
 
-        # Tiêu đề chính giao diện Web
+        # --- GIAO DIỆN CHÍNH (WEB) ---
         st.title(f"🚀 {st.session_state.selected_project}")
-        st.markdown(f"#### 📅 Sprint {int(s_no)} | {s_start.strftime('%d/%m')} - {s_end.strftime('%d/%m')}")
+        st.subheader(f"🚩 Sprint {int(s_no)} ({s_start.strftime('%d/%m')} - {s_end.strftime('%d/%m')})")
         st.divider()
 
         # Thống kê PIC
@@ -105,24 +105,25 @@ try:
             est_total=('Estimate Dev', 'sum'),
             real_total=('Real', 'sum')
         ).reset_index()
+        
         pic_stats['pending'] = pic_stats['total'] - pic_stats['done']
         pic_stats['percent'] = (pic_stats['done'] / pic_stats['total'] * 100).fillna(0).round(1)
 
-        # Hiển thị Cards trên Web
+        # KHÔI PHỤC GIAO DIỆN BOX PIC TRÊN WEB
         cols = st.columns(5)
         for i, row in pic_stats.iterrows():
             with cols[i % 5]:
                 st.metric(row['PIC'], f"{row['percent']}%")
-                st.write(f"✅ {int(row['done'])} | 🚧 {int(row['doing'])} | ⏳ {int(row['pending'])}")
                 st.progress(min(row['percent']/100, 1.0))
-                st.divider()
+                st.write(f"✅ {int(row['done'])} | 🚧 {int(row['doing'])} | ⏳ Tồn: **{int(row['pending'])}**")
+                st.caption(f"Est: {row['est_total']}h | Real: {row['real_total']}h")
+                st.write("---")
 
-        # --- PHẦN GỬI BÁO CÁO (PHÂN BIỆT TELE & DISCORD) ---
+        # --- LOGIC GỬI BÁO CÁO (TÍCH HỢP SPRINT & FORMAT RIÊNG) ---
         st.sidebar.divider()
         if st.sidebar.button(f"📤 Bắn báo cáo {config['platform']}"):
-            
             if config['platform'] == "Discord":
-                # --- FORMAT TEAM DEBUFFER (DISCORD) ---
+                # FORMAT DISCORD (ẢNH 1)
                 msg = f"**{st.session_state.selected_project.upper()} - SPRINT {int(s_no)}**\n"
                 msg += f"({s_start.strftime('%d/%m')} - {s_end.strftime('%d/%m')})\n"
                 msg += "──────────────────────────────\n"
@@ -132,36 +133,34 @@ try:
                     msg += f"🚧 Đang làm: {int(r['doing'])}\n"
                     msg += f"⏳ Chưa làm: {int(r['pending'])}\n"
                     msg += "──────────────────────────────\n"
-                
                 requests.post(config['webhook_url'], json={"content": msg})
-                st.sidebar.success("Đã gửi báo cáo Debuffer lên Discord!")
+                st.sidebar.success("Sent to Discord!")
 
             else:
-                # --- FORMAT TEAM INFINITY (TELEGRAM) ---
+                # FORMAT TELEGRAM (ẢNH 2)
                 icons = ["🔧", "👽", "✨", "🌟", "🔍", "👾", "✏️", "💊"]
                 msg = f"🤖 **AUTO REPORT ({datetime.now(VN_TZ).strftime('%d/%m %H:%M')})**\n"
                 msg += f"🚩 **SPRINT {int(s_no)}**\n"
                 msg += "──────────────────────────────\n"
-                for i, (_, r) in enumerate(pic_stats.iterrows()):
+                for i, (_, r) in enumerate(pic_stats.iterrows():
                     icon = icons[i % len(icons)]
                     msg += f"{icon} **{r['PIC']}**\n"
                     msg += f"┣ Tiến độ: **{r['percent']}%**\n"
                     msg += f"┣ ✅ Xong: {int(r['done'])} | 🚧 Đang: {int(r['doing'])}\n"
                     msg += f"┗ ⌚ Giờ: {r['real_total']}h / {r['est_total']}h\n"
                     msg += "──────────────────────────────\n"
-                
                 url_tg = f"https://api.telegram.org/bot{config['bot_token']}/sendMessage"
                 payload = {"chat_id": config['chat_id'], "text": msg, "parse_mode": "Markdown"}
                 if "topic_id" in config: payload["message_thread_id"] = config['topic_id']
                 requests.post(url_tg, json=payload)
-                st.sidebar.success("Đã gửi báo cáo Infinity lên Telegram!")
+                st.sidebar.success("Sent to Telegram!")
 
-        # Biểu đồ & Chi tiết
-        st.plotly_chart(px.bar(pic_stats, x='PIC', y=['est_total', 'real_total'], barmode='group'), use_container_width=True)
+        # BIỂU ĐỒ & BẢNG CHI TIẾT
+        st.plotly_chart(px.bar(pic_stats, x='PIC', y=['est_total', 'real_total'], barmode='group', title="Thống kê giờ làm việc"), use_container_width=True)
         with st.expander("📋 Xem chi tiết danh sách Task"):
             st.dataframe(df_team[['Userstory/Todo', 'State', 'PIC', 'Estimate Dev', 'Real']], use_container_width=True)
 
     else:
-        st.error("Không tìm thấy dữ liệu.")
+        st.error("Không tìm thấy hàng tiêu đề 'Userstory/Todo'.")
 except Exception as e:
     st.error(f"Lỗi: {e}")
