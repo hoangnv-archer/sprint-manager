@@ -23,12 +23,12 @@ def get_current_sprint_info(project_name):
     days_diff = (now - base_date).days
     
     # Nếu là dự án Final (so le), ta dịch mốc gốc đi 7 ngày
-    if project_name == "Sprint Dashboard Final":
+    if project_name == "Sprint Team Debuffer":
         days_diff -= 7
         
     sprint_no = (days_diff // 14) + 1
     sprint_start = base_date + timedelta(days=(sprint_no - 1) * 14)
-    if project_name == "Sprint Dashboard Final":
+    if project_name == "Sprint Team Debuffer":
         sprint_start += timedelta(days=7)
         
     sprint_end = sprint_start + timedelta(days=11) # Kết thúc vào Thứ 6 tuần sau (12 ngày tính cả Thứ 2)
@@ -51,7 +51,7 @@ def get_actual_hours(start_val):
 
 # --- 2. CẤU HÌNH DỰ ÁN ---
 PROJECTS = {
-    "Sprint Team 2": {
+    "Sprint Team Infinity": {
         "url": "https://docs.google.com/spreadsheets/d/1hentY_r7GNVwJWM3wLT7LsA3PrXQidWnYahkfSwR9Kw/edit?pli=1&gid=982443592#gid=982443592",
         "pics": ['Chuân', 'Việt', 'Thắng', 'QA', 'Mai', 'Hải Anh', 'Thuật', 'Hiếu'],
         "platform": "Telegram",
@@ -59,7 +59,7 @@ PROJECTS = {
         "chat_id": "-1002102856307",
         "topic_id": 18251
     },
-    "Sprint Dashboard Final": {
+    "Sprint Team Debuffer": {
         "url": "https://docs.google.com/spreadsheets/d/1llUlTDfR413oZelu-AoMsC0lEzHqXOkB4SCwc_4zmAo/edit?pli=1&gid=982443592#gid=982443592",
         "pics": ['Tài', 'Dương', 'QA', 'Quân', 'Phú', 'Thịnh', 'Đô', 'Tùng', 'Anim', 'Thắng VFX'],
         "platform": "Discord"
