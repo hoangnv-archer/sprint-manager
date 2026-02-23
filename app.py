@@ -5,7 +5,7 @@ import plotly.express as px
 import requests
 from datetime import datetime, timezone, timedelta
 
-# --- 1. CẤU HÌNH THỜI GIAN ---
+# --- 1. CỐ ĐỊNH MÚI GIỜ VIỆT NAM ---
 VN_TZ = timezone(timedelta(hours=7))
 
 def get_current_sprint_info(config):
@@ -54,18 +54,17 @@ PROJECTS = {
     }
 }
 
-st.set_page_config(page_title="Sprint Dashboard", layout="wide")
+st.set_page_config(page_title="Multi-Project Dashboard", layout="wide")
 
 if 'selected_project' not in st.session_state:
     st.session_state.selected_project = list(PROJECTS.keys())[0]
 
 # --- 3. SIDEBAR ---
-st.sidebar.title("📁 Quản lý Sprint")
+st.sidebar.title("📁 Danh sách dự án")
 for project_name, p_config in PROJECTS.items():
     s_no, s_start, s_end = get_current_sprint_info(p_config)
-    btn_label = f"{project_name}\n(Sprint {int(s_no)})"
-    if st.sidebar.button(btn_label, use_container_width=True, 
-                         type="primary" if st.session_state.selected_project == project_name else "secondary"):
+    btn_type = "primary" if st.session_state.selected_project == project_name else "secondary"
+    if st.sidebar.button(f"{project_name}\n(Sprint {int(s_no)})", use_container_width=True, type=btn_type):
         st.session_state.selected_project = project_name
         st.rerun()
 
@@ -82,58 +81,44 @@ try:
         df = conn.read(spreadsheet=config['url'], skiprows=header_idx, ttl=0)
         df.columns = [str(c).strip() for c in df.columns]
 
-        # 1. Làm sạch PIC (Loại bỏ khoảng trắng)
+        # Clean dữ liệu
         df['PIC'] = df['PIC'].fillna('').str.strip()
-        
-        # 2. Làm sạch State
-        df['State_Clean'] = df['State'].fillna('').str.strip().str.lower()
-        
-        # 3. Chuẩn hóa số
+        df['State_Clean'] = df['State'].fillna('None').str.strip().str.lower()
         for col in ['Estimate Dev', 'Real']:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
 
-        # 4. Lọc theo danh sách PIC đã config
         df_team = df[df['PIC'].isin(config['pics'])].copy()
 
-        # Hiển thị Header
+        # Tiêu đề chính
         st.title(f"🚀 {st.session_state.selected_project}")
-        st.info(f"📅 **Sprint {int(s_no)}**: {s_start.strftime('%d/%m')} ➔ {s_end.strftime('%d/%m')}")
+        st.markdown(f"#### 📅 Sprint {int(s_no)} | {s_start.strftime('%d/%m')} - {s_end.strftime('%d/%m')} (Kết thúc Thứ 6)")
+        st.divider()
 
-        # --- THỐNG KÊ PIC (ĐÃ FIX % HIỂN THỊ) ---
-        # Logic tính toán: Done bao gồm 'done', 'cancel', 'dev done'
+        # --- PHẦN 1: THỐNG KÊ PIC (DẠNG BOX TRUYỀN THỐNG) ---
         done_states = ['done', 'cancel', 'dev done']
-        
         pic_stats = df_team.groupby('PIC').agg(
             total=('Userstory/Todo', 'count'),
             done=('State_Clean', lambda x: x.isin(done_states).sum()),
-            doing=('State_Clean', lambda x: x.str.contains('progress').sum())
-        ).reset_index()
-        
-        # Thêm cột tổng giờ
-        hour_stats = df_team.groupby('PIC').agg(
+            doing=('State_Clean', lambda x: x.str.contains('progress').sum()),
             est_total=('Estimate Dev', 'sum'),
             real_total=('Real', 'sum')
         ).reset_index()
-        pic_stats = pic_stats.merge(hour_stats, on='PIC')
-
+        
         pic_stats['pending'] = pic_stats['total'] - pic_stats['done']
-        # Tính phần trăm: (Số task xong / Tổng task) * 100
         pic_stats['percent'] = (pic_stats['done'] / pic_stats['total'] * 100).fillna(0).round(1)
 
-        # --- HIỂN THỊ METRICS THEO PIC ---
-        st.subheader("📊 Tiến độ hoàn thành (%)")
-        cols = st.columns(len(pic_stats) if len(pic_stats) > 0 else 1)
+        # Hiển thị Metrics dạng Cards
+        cols = st.columns(5)
         for i, row in pic_stats.iterrows():
-            with cols[i]:
-                # Hiển thị số % nổi bật
-                st.metric(label=row['PIC'], value=f"{row['percent']}%")
+            with cols[i % 5]:
+                st.metric(row['PIC'], f"{row['percent']}%")
+                st.write(f"✅ {int(row['done'])} | 🚧 {int(row['doing'])} | ⏳ Tồn: **{int(row['pending'])}**")
                 st.progress(min(row['percent']/100, 1.0))
-                st.write(f"✅ Xong: **{int(row['done'])}**")
-                st.write(f"⏳ Tồn: **{int(row['pending'])}**")
-                st.divider()
+                st.caption(f"Est: {row['est_total']}h | Real: {row['real_total']}h")
+                st.write("---")
 
-        # --- LOGIC CẢNH BÁO LỐ GIỜ ---
+        # --- PHẦN 2: CẢNH BÁO LỐ GIỜ ---
         t_col = next((c for c in df.columns if "start" in c.lower()), None)
         over_est_list = []
         if t_col:
@@ -148,16 +133,17 @@ try:
                         })
 
         if over_est_list:
-            st.error(f"🚨 CẢNH BÁO LỐ GIỜ")
+            st.error(f"🚨 PHÁT HIỆN {len(over_est_list)} TASK LÀM QUÁ GIỜ DỰ KIẾN!")
             st.table(pd.DataFrame(over_est_list))
 
-        # Biểu đồ
-        st.plotly_chart(px.bar(pic_stats, x='PIC', y=['est_total', 'real_total'], barmode='group', title="Tổng giờ Sprint"), use_container_width=True)
+        # --- PHẦN 3: BIỂU ĐỒ & CHI TIẾT ---
+        st.plotly_chart(px.bar(pic_stats, x='PIC', y=['est_total', 'real_total'], 
+                               barmode='group', title="So sánh Tổng giờ Dự kiến vs Thực tế"), use_container_width=True)
 
-        st.subheader("📋 Chi tiết Task")
-        st.dataframe(df_team[['Userstory/Todo', 'State', 'PIC', 'Estimate Dev', 'Real']], use_container_width=True)
+        with st.expander("📋 Xem chi tiết danh sách Task"):
+            st.dataframe(df_team[['Userstory/Todo', 'State', 'PIC', 'Estimate Dev', 'Real']], use_container_width=True)
 
     else:
-        st.error("Không tìm thấy dữ liệu.")
+        st.error("Không tìm thấy hàng tiêu đề 'Userstory/Todo'.")
 except Exception as e:
     st.error(f"Lỗi hệ thống: {e}")
