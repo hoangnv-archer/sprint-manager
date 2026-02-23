@@ -90,4 +90,85 @@ s_no, s_start, s_end = get_current_sprint_info(config)
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
     df_raw = conn.read(spreadsheet=config['url'], header=None, ttl=0)
-    header_idx = next((i for i, row in df
+    header_idx = next((i for i, row in df_raw.iterrows() if "Userstory/Todo" in row.values), None)
+            
+    if header_idx is not None:
+        df = conn.read(spreadsheet=config['url'], skiprows=header_idx, ttl=0)
+        df.columns = [str(c).strip() for c in df.columns]
+
+        # Chuẩn hóa số
+        for col in ['Estimate Dev', 'Real']:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
+
+        t_col = next((c for c in df.columns if "start" in c.lower()), None)
+        df['State_Clean'] = df['State'].fillna('None').str.strip().str.lower()
+        df_team = df[df['PIC'].isin(config['pics'])].copy()
+
+        # Hiển thị Tiêu đề & Thông tin Sprint
+        st.title(f"🚀 {st.session_state.selected_project}")
+        st.info(f"📅 **Sprint {int(s_no)}**: Từ {s_start.strftime('%d/%m/%Y')} đến {s_end.strftime('%d/%m/%Y')} (Kết thúc Thứ 6)")
+
+        # --- LOGIC CẢNH BÁO LỐ GIỜ ---
+        over_est_list = []
+        if t_col:
+            for _, row in df_team.iterrows():
+                if 'progress' in str(row['State_Clean']):
+                    actual_h = get_actual_hours(row[t_col])
+                    est_h = float(row['Estimate Dev'])
+                    if est_h > 0 and actual_h > est_h:
+                        over_est_list.append({
+                            "PIC": row['PIC'], "Task": row['Userstory/Todo'], 
+                            "Thực tế": f"{round(actual_h, 2)}h", "Vượt": f"{round((actual_h - est_h) * 60)}p"
+                        })
+
+        if over_est_list:
+            st.error(f"🚨 CẢNH BÁO LỐ GIỜ TRONG SPRINT")
+            st.table(pd.DataFrame(over_est_list))
+
+        # --- THỐNG KÊ PIC ---
+        pic_stats = df_team.groupby('PIC').agg(
+            total=('Userstory/Todo', 'count'),
+            done=('State_Clean', lambda x: x.isin(['done', 'cancel', 'dev done']).sum()),
+            doing=('State_Clean', lambda x: x.str.contains('progress').sum()),
+            est_total=('Estimate Dev', 'sum'),
+            real_total=('Real', 'sum')
+        ).reset_index()
+        pic_stats['pending'] = pic_stats['total'] - pic_stats['done']
+        pic_stats['percent'] = (pic_stats['done'] / pic_stats['total'] * 100).fillna(0).round(1)
+
+        st.subheader("👤 Trạng thái chi tiết PIC")
+        cols = st.columns(5)
+        for i, row in pic_stats.iterrows():
+            with cols[i % 5]:
+                st.metric(row['PIC'], f"{row['percent']}%")
+                st.write(f"✅ {int(row['done'])} | 🚧 {int(row['doing'])} | ⏳ Tồn: {int(row['pending'])}")
+                st.progress(min(row['percent']/100, 1.0))
+                st.divider()
+
+        st.plotly_chart(px.bar(pic_stats, x='PIC', y=['est_total', 'real_total'], barmode='group', title="So sánh Giờ Dự kiến vs Thực tế"), use_container_width=True)
+
+        # --- GỬI BÁO CÁO ---
+        st.sidebar.divider()
+        if st.sidebar.button(f"📤 Bắn báo cáo {config['platform']}"):
+            msg = f"📊 **REPORT: {st.session_state.selected_project} (Sprint {int(s_no)})**\n"
+            for _, r in pic_stats.iterrows():
+                msg += f"• {r['PIC']}: {r['percent']}% (Tồn: {int(r['pending'])})\n"
+            if over_est_list:
+                msg += "\n🚨 **LỐ GIỜ:** " + ", ".join([f"{x['PIC']}" for x in over_est_list])
+            
+            if config['platform'] == "Discord":
+                webhook_url = st.sidebar.text_input("Dán Webhook:", type="password")
+                if webhook_url: requests.post(webhook_url, json={"content": msg})
+            else:
+                url_tg = f"https://api.telegram.org/bot{config['bot_token']}/sendMessage"
+                requests.post(url_tg, json={"chat_id": config['chat_id'], "text": msg})
+            st.sidebar.success("Đã gửi!")
+
+        st.subheader("📋 Bảng chi tiết Task")
+        st.dataframe(df_team[['Userstory/Todo', 'State', 'PIC', 'Estimate Dev', 'Real']], use_container_width=True)
+
+    else:
+        st.error("Không tìm thấy hàng tiêu đề 'Userstory/Todo'.")
+except Exception as e:
+    st.error(f"Lỗi hệ thống: {e}")
