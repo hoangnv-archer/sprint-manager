@@ -43,14 +43,14 @@ PROJECTS = {
         "chat_id": "-1002102856307",
         "topic_id": 18251,
         "sprint_start_date": "2026-02-09", 
-        "base_sprint_no": 1                
+        "base_sprint_no": 31                
     },
     "Sprint Team Debuffer": {
         "url": "https://docs.google.com/spreadsheets/d/1llUlTDfR413oZelu-AoMsC0lEzHqXOkB4SCwc_4zmAo/edit?pli=1&gid=982443592#gid=982443592",
         "pics": ['Tài', 'Dương', 'QA', 'Quân', 'Phú', 'Thịnh', 'Đô', 'Tùng', 'Anim', 'Thắng VFX'],
         "platform": "Discord",
         "sprint_start_date": "2026-02-16", 
-        "base_sprint_no": 1
+        "base_sprint_no": 6
     }
 }
 
@@ -95,7 +95,7 @@ try:
         st.markdown(f"#### 📅 Sprint {int(s_no)} | {s_start.strftime('%d/%m')} - {s_end.strftime('%d/%m')} (Kết thúc Thứ 6)")
         st.divider()
 
-        # --- PHẦN 1: THỐNG KÊ PIC (DẠNG BOX TRUYỀN THỐNG) ---
+        # --- PHẦN 1: THỐNG KÊ PIC ---
         done_states = ['done', 'cancel', 'dev done']
         pic_stats = df_team.groupby('PIC').agg(
             total=('Userstory/Todo', 'count'),
@@ -108,7 +108,6 @@ try:
         pic_stats['pending'] = pic_stats['total'] - pic_stats['done']
         pic_stats['percent'] = (pic_stats['done'] / pic_stats['total'] * 100).fillna(0).round(1)
 
-        # Hiển thị Metrics dạng Cards
         cols = st.columns(5)
         for i, row in pic_stats.iterrows():
             with cols[i % 5]:
@@ -135,6 +134,33 @@ try:
         if over_est_list:
             st.error(f"🚨 PHÁT HIỆN {len(over_est_list)} TASK LÀM QUÁ GIỜ DỰ KIẾN!")
             st.table(pd.DataFrame(over_est_list))
+
+        # --- PHẦN GỬI BÁO CÁO (UPDATE SPRINT NO) ---
+        st.sidebar.divider()
+        st.sidebar.subheader("📢 Gửi báo cáo nhanh")
+        if st.sidebar.button(f"📤 Bắn báo cáo {config['platform']}"):
+            msg = f"📊 **BÁO CÁO: {st.session_state.selected_project}**\n"
+            msg += f"🚩 **Sprint: {int(s_no)}** ({s_start.strftime('%d/%m')} - {s_end.strftime('%d/%m')})\n"
+            msg += "----------------------------\n"
+            for _, r in pic_stats.iterrows():
+                msg += f"• {r['PIC']}: {r['percent']}% (Xong: {int(r['done'])}/Tồn: {int(r['pending'])})\n"
+            
+            if over_est_list:
+                msg += "\n🚨 **CẢNH BÁO LỐ GIỜ:**\n"
+                for item in over_est_list:
+                    msg += f"🔥 {item['PIC']}: Lố {item['Vượt']}\n"
+
+            if config['platform'] == "Discord":
+                # Thay URL Webhook của bạn vào đây
+                webhook_url = "YOUR_DISCORD_WEBHOOK_URL"
+                requests.post(webhook_url, json={"content": msg})
+                st.sidebar.success("Đã gửi Discord!")
+            else:
+                url_tg = f"https://api.telegram.org/bot{config['bot_token']}/sendMessage"
+                payload = {"chat_id": config['chat_id'], "text": msg, "parse_mode": "Markdown"}
+                if "topic_id" in config: payload["message_thread_id"] = config['topic_id']
+                requests.post(url_tg, json=payload)
+                st.sidebar.success("Đã gửi Telegram!")
 
         # --- PHẦN 3: BIỂU ĐỒ & CHI TIẾT ---
         st.plotly_chart(px.bar(pic_stats, x='PIC', y=['est_total', 'real_total'], 
