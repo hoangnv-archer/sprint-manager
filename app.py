@@ -19,8 +19,9 @@ def get_current_sprint_info(config):
     current_sprint_end = current_sprint_start + timedelta(days=11)
     return current_sprint_no, current_sprint_start, current_sprint_end
 
-# --- 2. HÀM SOẠN TIN NHẮN CHUẨN (Fix lỗi thiếu Sprint trên GitHub Action) ---
+# --- 2. HÀM GỬI TIN NHẮN (Đảm bảo 100% có Sprint và Giờ) ---
 def send_report_logic(project_name, config, pic_stats):
+    # Lấy lại số sprint một lần nữa để chắc chắn không bị thiếu
     s_no, s_start, s_end = get_current_sprint_info(config)
     
     if config['platform'] == "Discord":
@@ -32,21 +33,22 @@ def send_report_logic(project_name, config, pic_stats):
             msg += f"✅ **Xong/Cancel: {int(r['done'])}**\n"
             msg += f"🚧 Đang làm: {int(r['doing'])}\n"
             msg += f"⏳ Chưa làm: {int(r['pending'])}\n"
-            msg += f"⏱️ Giờ: `{r['real_total']}h` / `{r['est_total']}h` (Real/Est)\n"
+            # Ép kiểu float và làm tròn để đảm bảo hiển thị con số
+            msg += f"⏱️ Giờ: `{round(float(r['real_total']), 1)}h` / `{round(float(r['est_total']), 1)}h` (Real/Est)\n"
             msg += "──────────────────────────────\n"
         requests.post(config['webhook_url'], json={"content": msg})
     
     else:
         icons = ["🔧", "👽", "✨", "🌟", "🔍", "👾", "✏️", "💊"]
-        msg = f"🤖 **AUTO REPORT ({datetime.now(VN_TZ).strftime('%d/%m %H:%M')})**\n"
-        msg += f"🚩 **SPRINT {int(s_no)}**\n"
+        msg = f"🤖 **AUTO REPORT ({datetime.now(VN_TZ).strftime('%H:%M')})**\n"
+        msg += f"🚩 **SPRINT {int(s_no)}** ({s_start.strftime('%d/%m')} - {s_end.strftime('%d/%m')})\n"
         msg += "──────────────────────────────\n"
         for i, (_, r) in enumerate(pic_stats.iterrows()):
             icon = icons[i % len(icons)]
             msg += f"{icon} **{r['PIC']}**\n"
             msg += f"┣ Tiến độ: **{r['percent']}%**\n"
             msg += f"┣ ✅ Xong: {int(r['done'])} | 🚧 Đang: {int(r['doing'])}\n"
-            msg += f"┗ ⌚ Giờ: {r['real_total']}h / {r['est_total']}h (Real/Est)\n"
+            msg += f"┗ ⌚ Giờ: {round(float(r['real_total']), 1)}h / {round(float(r['est_total']), 1)}h\n"
             msg += "──────────────────────────────\n"
         
         url_tg = f"https://api.telegram.org/bot{config['bot_token']}/sendMessage"
@@ -76,85 +78,78 @@ PROJECTS = {
     }
 }
 
-# --- 4. HÀM XỬ LÝ DỮ LIỆU CHUNG ---
-def get_processed_data(config):
-    conn = st.connection("gsheets", type=GSheetsConnection)
-    df_raw = conn.read(spreadsheet=config['url'], header=None, ttl=0)
-    header_idx = next((i for i, row in df_raw.iterrows() if "Userstory/Todo" in row.values), None)
-    if header_idx is None: return None
-    
-    df = conn.read(spreadsheet=config['url'], skiprows=header_idx, ttl=0)
-    df.columns = [str(c).strip() for c in df.columns]
-    df['PIC'] = df['PIC'].fillna('').str.strip()
-    df['State_Clean'] = df['State'].fillna('None').str.strip().str.lower()
-    for col in ['Estimate Dev', 'Real']:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
-    
-    df_team = df[df['PIC'].isin(config['pics'])].copy()
-    done_states = ['done', 'cancel', 'dev done']
-    pic_stats = df_team.groupby('PIC').agg(
-        total=('Userstory/Todo', 'count'),
-        done=('State_Clean', lambda x: x.isin(done_states).sum()),
-        doing=('State_Clean', lambda x: x.str.contains('progress').sum()),
-        est_total=('Estimate Dev', 'sum'),
-        real_total=('Real', 'sum')
-    ).reset_index()
-    pic_stats['percent'] = (pic_stats['done'] / pic_stats['total'] * 100).fillna(0).round(1)
-    pic_stats['pending'] = pic_stats['total'] - pic_stats['done']
-    return pic_stats
-
-# --- 5. CHẠY GIAO DIỆN WEB ---
-def run_web():
-    st.set_page_config(page_title="Sprint Dashboard", layout="wide")
-    if 'selected_project' not in st.session_state:
-        st.session_state.selected_project = list(PROJECTS.keys())[0]
-
-    st.sidebar.title("📁 Dự án")
-    for name, p_cfg in PROJECTS.items():
-        s_no, _, _ = get_current_sprint_info(p_cfg)
-        btn_type = "primary" if st.session_state.selected_project == name else "secondary"
-        if st.sidebar.button(f"{name}\nSprint {int(s_no)}", use_container_width=True, type=btn_type):
-            st.session_state.selected_project = name
-            st.rerun()
-
-    config = PROJECTS[st.session_state.selected_project]
-    pic_stats = get_processed_data(config)
-    s_no, s_start, s_end = get_current_sprint_info(config)
-
-    if pic_stats is not None:
-        st.title(f"🚀 {st.session_state.selected_project}")
-        st.subheader(f"🚩 Sprint {int(s_no)} ({s_start.strftime('%d/%m')} - {s_end.strftime('%d/%m')})")
+# --- 4. HÀM XỬ LÝ DATA (Dùng chung cho cả 2 môi trường) ---
+def get_data_and_process(config):
+    # Sử dụng cách đọc link trực tiếp nếu chạy ngầm
+    csv_url = config['url'].replace('/edit?pli=1&gid=', '/export?format=csv&gid=').split('#')[0]
+    try:
+        df_all = pd.read_csv(csv_url, header=None)
+        header_row = df_all[df_all.eq("Userstory/Todo").any(axis=1)].index[0]
+        df = pd.read_csv(csv_url, skiprows=header_row)
         
-        st.sidebar.divider()
-        if st.sidebar.button(f"📤 Bắn báo cáo {config['platform']}"):
-            send_report_logic(st.session_state.selected_project, config, pic_stats)
-            st.sidebar.success("Đã gửi báo cáo!")
-
-        cols = st.columns(5)
-        for i, row in pic_stats.iterrows():
-            with cols[i % 5]:
-                st.metric(row['PIC'], f"{row['percent']}%")
-                st.progress(min(row['percent']/100, 1.0))
-                st.write(f"✅ {int(row['done'])} | 🚧 {int(row['doing'])} | ⏳ Tồn: **{int(row['pending'])}**")
-                st.caption(f"Est: {row['est_total']}h | Real: {row['real_total']}h")
-                st.write("---")
+        df.columns = [str(c).strip() for c in df.columns]
+        df['PIC'] = df['PIC'].fillna('').str.strip()
+        df['State_Clean'] = df['State'].fillna('None').str.strip().str.lower()
         
-        st.plotly_chart(px.bar(pic_stats, x='PIC', y=['est_total', 'real_total'], barmode='group'), use_container_width=True)
-    else:
-        st.error("Không tìm thấy dữ liệu hoặc lỗi cấu hình bảng tính.")
+        for col in ['Estimate Dev', 'Real']:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
+        
+        df_team = df[df['PIC'].isin(config['pics'])].copy()
+        done_states = ['done', 'cancel', 'dev done']
+        
+        stats = df_team.groupby('PIC').agg(
+            total=('Userstory/Todo', 'count'),
+            done=('State_Clean', lambda x: x.isin(done_states).sum()),
+            doing=('State_Clean', lambda x: x.str.contains('progress').sum()),
+            est_total=('Estimate Dev', 'sum'),
+            real_total=('Real', 'sum')
+        ).reset_index()
+        
+        stats['percent'] = (stats['done'] / stats['total'] * 100).fillna(0).round(1)
+        stats['pending'] = stats['total'] - stats['done']
+        return stats
+    except Exception as e:
+        print(f"Lỗi đọc dữ liệu: {e}")
+        return None
 
-# --- 6. CHẠY TỰ ĐỘNG (GITHUB ACTIONS) ---
+# --- 5. LOGIC CHẠY ---
 if __name__ == "__main__":
+    # Kiểm tra xem có đang chạy trong Streamlit không
+    is_streamlit = False
     try:
         from streamlit.runtime.scriptrunner import get_script_run_ctx
-        if get_script_run_ctx() is not None:
-            run_web()
-        else:
-            raise ImportError
-    except ImportError:
-        # Code cho GitHub Actions
+        if get_script_run_ctx(): is_streamlit = True
+    except: pass
+
+    if is_streamlit:
+        # GIAO DIỆN WEB
+        st.set_page_config(page_title="Sprint Dashboard", layout="wide")
+        if 'selected_project' not in st.session_state:
+            st.session_state.selected_project = list(PROJECTS.keys())[0]
+
+        config = PROJECTS[st.session_state.selected_project]
+        s_no, s_start, s_end = get_current_sprint_info(config)
+        pic_stats = get_data_and_process(config)
+
+        st.title(f"🚀 {st.session_state.selected_project}")
+        st.subheader(f"🚩 Sprint {int(s_no)} ({s_start.strftime('%d/%m')} - {s_end.strftime('%d/%m')})")
+
+        if st.sidebar.button(f"📤 Bắn báo cáo {config['platform']}"):
+            send_report_logic(st.session_state.selected_project, config, pic_stats)
+            st.sidebar.success("Đã gửi!")
+
+        if pic_stats is not None:
+            cols = st.columns(5)
+            for i, row in pic_stats.iterrows():
+                with cols[i % 5]:
+                    st.metric(row['PIC'], f"{row['percent']}%")
+                    st.write(f"✅ {int(row['done'])} | 🚧 {int(row['doing'])} | ⏳ Tồn: {int(row['pending'])}")
+                    st.progress(min(row['percent']/100, 1.0))
+            st.plotly_chart(px.bar(pic_stats, x='PIC', y=['est_total', 'real_total'], barmode='group'))
+    else:
+        # CHẠY TỰ ĐỘNG (GITHUB ACTIONS)
         for name, cfg in PROJECTS.items():
-            stats = get_processed_data(cfg)
+            stats = get_data_and_process(cfg)
             if stats is not None:
                 send_report_logic(name, cfg, stats)
