@@ -4,13 +4,14 @@ import pandas as pd
 import requests
 from datetime import datetime, timezone, timedelta
 import plotly.express as px
+import sys
 
 # --- 1. CỐ ĐỊNH MÚI GIỜ VIỆT NAM ---
 VN_TZ = timezone(timedelta(hours=7))
 
 def get_current_sprint_info(config):
     now = datetime.now(VN_TZ).date()
-    base_date = datetime.strptime(config['sprint_start_date'], "%Y-%m-%d").date()
+    base_date = datetime.strptime(config['sprint_start_date'], f"%Y-%m-%d").date()
     base_sprint_no = config['base_sprint_no']
     days_diff = (now - base_date).days
     sprint_elapsed = max(0, days_diff // 14)
@@ -41,23 +42,27 @@ PROJECTS = {
     }
 }
 
-# --- 3. HÀM XỬ LÝ DATA (Sử dụng Connection để tránh lỗi 401) ---
-def get_data_and_process(config):
+# --- 3. HÀM XỬ LÝ DATA (Tối ưu cache để tránh lỗi Quota 429) ---
+@st.cache_data(ttl=300) # Lưu cache 5 phút cho giao diện Web
+def get_data_and_process(config_name):
+    config = PROJECTS[config_name]
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
-        # Đọc toàn bộ bảng để tìm header
+        # Tải toàn bộ sheet một lần duy nhất
         df_raw = conn.read(spreadsheet=config['url'], header=None, ttl=0)
         header_idx = next((i for i, row in df_raw.iterrows() if "Userstory/Todo" in row.values), None)
         
         if header_idx is not None:
-            df = conn.read(spreadsheet=config['url'], skiprows=header_idx, ttl=0)
+            df = df_raw.iloc[header_idx:].copy()
+            df.columns = df.iloc[0]
+            df = df[1:].reset_index(drop=True)
             df.columns = [str(c).strip() for c in df.columns]
             
-            # Làm sạch PIC và State
-            df['PIC'] = df['PIC'].fillna('').str.strip()
-            df['State_Clean'] = df['State'].fillna('None').str.strip().str.lower()
+            # Làm sạch dữ liệu
+            df['PIC'] = df['PIC'].fillna('').astype(str).str.strip()
+            df['State_Clean'] = df['State'].fillna('None').astype(str).str.strip().str.lower()
             
-            # ÉP KIỂU GIỜ: Xử lý cả dấu phẩy và chữ 'h'
+            # Ép kiểu giờ (Xử lý dấu phẩy và chữ 'h')
             for col in ['Estimate Dev', 'Real']:
                 if col in df.columns:
                     df[col] = df[col].astype(str).str.replace('h', '', case=False).str.replace(',', '.')
@@ -79,12 +84,15 @@ def get_data_and_process(config):
             return stats
         return None
     except Exception as e:
-        st.error(f"Lỗi kết nối GSheets: {e}")
+        if "--action" not in sys.argv:
+            st.error(f"Lỗi kết nối GSheets: {e}")
         return None
 
-# --- 4. HÀM GỬI TIN NHẮN ---
+# --- 4. HÀM GỬI TIN NHẮN (Đồng bộ format tuyệt đối) ---
 def send_report_logic(project_name, config, pic_stats):
     s_no, s_start, s_end = get_current_sprint_info(config)
+    time_str = datetime.now(VN_TZ).strftime('%H:%M')
+    
     if config['platform'] == "Discord":
         msg = f"**{project_name.upper()} - SPRINT {int(s_no)}**\n({s_start.strftime('%d/%m')} - {s_end.strftime('%d/%m')})\n──────────────────────────────\n"
         for _, r in pic_stats.iterrows():
@@ -92,30 +100,46 @@ def send_report_logic(project_name, config, pic_stats):
         requests.post(config['webhook_url'], json={"content": msg})
     else:
         icons = ["🔧", "👽", "✨", "🌟", "🔍", "👾", "✏️", "💊"]
-        msg = f"🤖 **AUTO REPORT ({datetime.now(VN_TZ).strftime('%H:%M')})**\n🚩 **SPRINT {int(s_no)}** ({s_start.strftime('%d/%m')} - {s_end.strftime('%d/%m')})\n──────────────────────────────\n"
+        msg = f"🤖 **AUTO REPORT ({time_str})**\n🚩 **SPRINT {int(s_no)}** ({s_start.strftime('%d/%m')} - {s_end.strftime('%d/%m')})\n──────────────────────────────\n"
         for i, (_, r) in enumerate(pic_stats.iterrows()):
             icon = icons[i % len(icons)]
             msg += f"{icon} **{r['PIC']}**\n┣ Tiến độ: **{r['percent']}%**\n┣ ✅ Xong: {int(r['done'])} | 🚧 Đang: {int(r['doing'])}\n┗ ⌚ Giờ: {round(float(r['real_total']), 1)}h / {round(float(r['est_total']), 1)}h\n──────────────────────────────\n"
+        
         url_tg = f"https://api.telegram.org/bot{config['bot_token']}/sendMessage"
         payload = {"chat_id": config['chat_id'], "text": msg, "parse_mode": "Markdown"}
         if "topic_id" in config: payload["message_thread_id"] = config['topic_id']
         requests.post(url_tg, json=payload)
 
-# --- 5. GIAO DIỆN WEB ---
+# --- 5. LOGIC CHẠY (PHÂN BIỆT MÔI TRƯỜNG) ---
+
+# TRƯỜNG HỢP 1: CHẠY QUA GITHUB ACTIONS (Có tham số --action)
+if "--action" in sys.argv:
+    for name in PROJECTS.keys():
+        # Gọi hàm xử lý (bỏ qua cache của streamlit khi chạy script)
+        stats = get_data_and_process.__wrapped__(name)
+        if stats is not None:
+            send_report_logic(name, PROJECTS[name], stats)
+            print(f"Successfully sent report for {name}")
+    sys.exit(0) # Thoát ngay lập tức để tránh loop
+
+# TRƯỜNG HỢP 2: CHẠY GIAO DIỆN WEB (STREAMLIT)
 st.set_page_config(page_title="Sprint Dashboard", layout="wide")
+
 if 'selected_project' not in st.session_state:
     st.session_state.selected_project = list(PROJECTS.keys())[0]
 
+# Sidebar chọn dự án
 st.sidebar.title("📁 Dự án")
 for name, p_cfg in PROJECTS.items():
-    s_no, _, _ = get_current_sprint_info(p_cfg)
+    s_no_side, _, _ = get_current_sprint_info(p_cfg)
     btn_type = "primary" if st.session_state.selected_project == name else "secondary"
-    if st.sidebar.button(f"{name}\nSprint {int(s_no)}", use_container_width=True, key=name, type=btn_type):
+    if st.sidebar.button(f"{name}\nSprint {int(s_no_side)}", use_container_width=True, key=f"btn_{name}", type=btn_type):
         st.session_state.selected_project = name
         st.rerun()
 
+# Hiển thị dữ liệu
 config = PROJECTS[st.session_state.selected_project]
-pic_stats = get_data_and_process(config)
+pic_stats = get_data_and_process(st.session_state.selected_project)
 s_no, s_start, s_end = get_current_sprint_info(config)
 
 st.title(f"🚀 {st.session_state.selected_project}")
@@ -132,18 +156,9 @@ if pic_stats is not None:
         with cols[i % 5]:
             st.metric(row['PIC'], f"{row['percent']}%")
             st.progress(min(row['percent']/100, 1.0))
-            # Hiển thị giờ đậm trên web
             st.write(f"⏱️ **{round(float(row['real_total']), 1)}h** / {round(float(row['est_total']), 1)}h")
             st.write(f"✅ {int(row['done'])} | 🚧 {int(row['doing'])} | ⏳ Tồn: {int(row['pending'])}")
             st.divider()
     st.plotly_chart(px.bar(pic_stats, x='PIC', y=['est_total', 'real_total'], barmode='group'), use_container_width=True)
-
-# --- 6. GITHUB ACTIONS ---
-if __name__ == "__main__":
-    import sys
-    # Chỉ chạy khi không có giao diện Streamlit
-    if not any("streamlit" in arg for arg in sys.argv):
-        for name, cfg in PROJECTS.items():
-            stats = get_data_and_process(cfg)
-            if stats is not None:
-                send_report_logic(name, cfg, stats)
+else:
+    st.warning("Đang tải dữ liệu hoặc gặp lỗi Quota. Vui lòng thử lại sau 1 phút.")
