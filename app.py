@@ -20,8 +20,7 @@ def get_current_sprint_info(config):
     # Tính số ngày đã trôi qua kể từ mốc setup
     days_diff = (now - base_date).days
     
-    # Chu kỳ 14 ngày (2 tuần)
-    # Nếu days_diff âm (chưa tới ngày bắt đầu), vẫn trả về base_sprint_no
+    # Chu kỳ 14 ngày (2 tuần). max(0) để tránh số âm nếu setup ngày tương lai
     sprint_elapsed = max(0, days_diff // 14)
     current_sprint_no = base_sprint_no + sprint_elapsed
     
@@ -31,6 +30,20 @@ def get_current_sprint_info(config):
     current_sprint_end = current_sprint_start + timedelta(days=11)
     
     return current_sprint_no, current_sprint_start, current_sprint_end
+
+def get_actual_hours(start_val):
+    if pd.isna(start_val) or str(start_val).strip().lower() in ['none', '', 'nat', 'nan']:
+        return 0
+    try:
+        start_dt = pd.to_datetime(start_val, errors='coerce')
+        if pd.isna(start_dt): return 0
+        now_vn = datetime.now(VN_TZ)
+        if start_dt.year < 2000: 
+            start_dt = start_dt.replace(year=now_vn.year, month=now_vn.month, day=now_vn.day)
+        if start_dt.tzinfo is None:
+            start_dt = start_dt.replace(tzinfo=VN_TZ)
+        return max(0, (now_vn - start_dt).total_seconds() / 3600)
+    except: return 0
 
 # --- 2. CẤU HÌNH DỰ ÁN (SETUP TẠI ĐÂY) ---
 PROJECTS = {
@@ -42,37 +55,34 @@ PROJECTS = {
         "chat_id": "-1002102856307",
         "topic_id": 18251,
         # Setup Sprint:
-        "sprint_start_date": "2026-02-09", # Ngày Thứ 2 bắt đầu Sprint
-        "base_sprint_no": 1                # Số Sprint tại ngày bắt đầu đó
+        "sprint_start_date": "2026-02-09", 
+        "base_sprint_no": 1                
     },
     "Sprint Team Debuffer": {
         "url": "https://docs.google.com/spreadsheets/d/1llUlTDfR413oZelu-AoMsC0lEzHqXOkB4SCwc_4zmAo/edit?pli=1&gid=982443592#gid=982443592",
         "pics": ['Tài', 'Dương', 'QA', 'Quân', 'Phú', 'Thịnh', 'Đô', 'Tùng', 'Anim', 'Thắng VFX'],
         "platform": "Discord",
-        # Setup Sprint (So le 1 tuần):
-        "sprint_start_date": "2026-02-16", # Thứ 2 tuần sau đó
+        # Setup Sprint (So le):
+        "sprint_start_date": "2026-02-16", 
         "base_sprint_no": 1
     }
 }
 
 st.set_page_config(page_title="Sprint Dashboard", layout="wide")
 
-# --- 3. QUẢN LÝ CHỌN DỰ ÁN ---
 if 'selected_project' not in st.session_state:
     st.session_state.selected_project = list(PROJECTS.keys())[0]
 
+# --- 3. SIDEBAR ---
 st.sidebar.title("📁 Quản lý Sprint")
-
 for project_name, p_config in PROJECTS.items():
     s_no, s_start, s_end = get_current_sprint_info(p_config)
     btn_label = f"{project_name}\n(Sprint {int(s_no)})"
-    
     if st.sidebar.button(btn_label, use_container_width=True, 
                          type="primary" if st.session_state.selected_project == project_name else "secondary"):
         st.session_state.selected_project = project_name
         st.rerun()
 
-# Lấy config hiện tại
 config = PROJECTS[st.session_state.selected_project]
 s_no, s_start, s_end = get_current_sprint_info(config)
 
@@ -80,37 +90,4 @@ s_no, s_start, s_end = get_current_sprint_info(config)
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
     df_raw = conn.read(spreadsheet=config['url'], header=None, ttl=0)
-    header_idx = next((i for i, row in df_raw.iterrows() if "Userstory/Todo" in row.values), None)
-            
-    if header_idx is not None:
-        df = conn.read(spreadsheet=config['url'], skiprows=header_idx, ttl=0)
-        df.columns = [str(c).strip() for c in df.columns]
-
-        # Chuẩn hóa số
-        for col in ['Estimate Dev', 'Real']:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
-
-        # Trạng thái và PIC
-        df['State_Clean'] = df['State'].fillna('None').str.strip().str.lower()
-        df_team = df[df['PIC'].isin(config['pics'])].copy()
-
-        # Hiển thị tiêu đề động theo Sprint
-        st.title(f"🚀 {st.session_state.selected_project}")
-        
-        # Thanh trạng thái thời gian Sprint
-        col_t1, col_t2 = st.columns([2, 1])
-        with col_t1:
-            st.subheader(f"🔥 Sprint {int(s_no)}")
-            st.caption(f"📅 Thời gian: {s_start.strftime('%d/%m/%Y')} ➔ {s_end.strftime('%d/%m/%Y')} (Kết thúc Thứ 6)")
-        
-        # Phần hiển thị cảnh báo lố giờ và thống kê giữ nguyên như bản trước...
-        # (Để tiết kiệm không gian, tôi lược bớt phần vẽ Chart/Table phía dưới vì nó không đổi)
-        
-        # --- [PHẦN CODE HIỂN THỊ CẢNH BÁO VÀ BIỂU ĐỒ GIỐNG BẢN TRƯỚC] ---
-        # ... (Bạn giữ nguyên phần logic over_est_list và pic_stats từ bản code cũ nhé)
-        
-    else:
-        st.error("Không tìm thấy hàng tiêu đề trong Sheet.")
-except Exception as e:
-    st.error(f"Lỗi: {e}")
+    header_idx = next((i for i, row in df
