@@ -41,7 +41,7 @@ PROJECTS = {
     }
 }
 
-# --- 3. HÀM XỬ LÝ DATA (Dùng chung) ---
+# --- 3. HÀM XỬ LÝ DATA (ÉP KIỂU GIỜ CỰC MẠNH) ---
 def get_data_and_process(config):
     csv_url = config['url'].replace('/edit?pli=1&gid=', '/export?format=csv&gid=').split('#')[0]
     try:
@@ -49,13 +49,20 @@ def get_data_and_process(config):
         header_row = df_all[df_all.eq("Userstory/Todo").any(axis=1)].index[0]
         df = pd.read_csv(csv_url, skiprows=header_row)
         df.columns = [str(c).strip() for c in df.columns]
+        
+        # Clean PIC và State
         df['PIC'] = df['PIC'].fillna('').str.strip()
         df['State_Clean'] = df['State'].fillna('None').str.strip().str.lower()
+        
+        # FIX GIỜ: Loại bỏ chữ 'h', thay dấu phẩy bằng dấu chấm, ép về kiểu số
         for col in ['Estimate Dev', 'Real']:
             if col in df.columns:
-                df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
+                df[col] = df[col].astype(str).str.replace('h', '', case=False).str.replace(',', '.')
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+        
         df_team = df[df['PIC'].isin(config['pics'])].copy()
         done_states = ['done', 'cancel', 'dev done']
+        
         stats = df_team.groupby('PIC').agg(
             total=('Userstory/Todo', 'count'),
             done=('State_Clean', lambda x: x.isin(done_states).sum()),
@@ -63,12 +70,15 @@ def get_data_and_process(config):
             est_total=('Estimate Dev', 'sum'),
             real_total=('Real', 'sum')
         ).reset_index()
+        
         stats['percent'] = (stats['done'] / stats['total'] * 100).fillna(0).round(1)
         stats['pending'] = stats['total'] - stats['done']
         return stats
-    except: return None
+    except Exception as e:
+        st.error(f"Lỗi xử lý dữ liệu: {e}")
+        return None
 
-# --- 4. HÀM GỬI TIN NHẮN (Đảm bảo đầy đủ Sprint và Giờ) ---
+# --- 4. HÀM GỬI TIN NHẮN ---
 def send_report_logic(project_name, config, pic_stats):
     s_no, s_start, s_end = get_current_sprint_info(config)
     if config['platform'] == "Discord":
@@ -81,18 +91,17 @@ def send_report_logic(project_name, config, pic_stats):
         msg = f"🤖 **AUTO REPORT ({datetime.now(VN_TZ).strftime('%H:%M')})**\n🚩 **SPRINT {int(s_no)}** ({s_start.strftime('%d/%m')} - {s_end.strftime('%d/%m')})\n──────────────────────────────\n"
         for i, (_, r) in enumerate(pic_stats.iterrows()):
             icon = icons[i % len(icons)]
-            msg += f"{icon} **{r['PIC']}**\n┣ Tiến độ: **{r['percent']}%**\n┣ ✅ Xong: {int(r['done'])} | 🚧 Đang: {int(r['doing'])}\n┗ ⌚ Giờ: {round(float(r['real_total']), 1)}h / {round(float(r['est_total']), 1)}h\n──────────────────────────────\n"
+            msg += f"{icon} **{r['PIC']}**\n┣ Tiến độ: **{r['percent']}%**\n┣ ✅ Xong: {int(r['done'])} | 🚧 Đang: {int(r['doing'])}\n┗ ⌚ Giờ: {round(float(r['real_total']), 1)}h / {round(float(r['est_total']), 1)}h (Real/Est)\n──────────────────────────────\n"
         url_tg = f"https://api.telegram.org/bot{config['bot_token']}/sendMessage"
         payload = {"chat_id": config['chat_id'], "text": msg, "parse_mode": "Markdown"}
         if "topic_id" in config: payload["message_thread_id"] = config['topic_id']
         requests.post(url_tg, json=payload)
 
-# --- 5. HIỂN THỊ GIAO DIỆN STREAMLIT (Nằm ngoài if name == main) ---
+# --- 5. HIỂN THỊ WEB ---
 st.set_page_config(page_title="Sprint Dashboard", layout="wide")
 if 'selected_project' not in st.session_state:
     st.session_state.selected_project = list(PROJECTS.keys())[0]
 
-# Sidebar chọn dự án
 st.sidebar.title("📁 Quản lý dự án")
 for name, p_cfg in PROJECTS.items():
     s_no, _, _ = get_current_sprint_info(p_cfg)
@@ -101,10 +110,9 @@ for name, p_cfg in PROJECTS.items():
         st.session_state.selected_project = name
         st.rerun()
 
-# Xử lý nội dung chính
 config = PROJECTS[st.session_state.selected_project]
-s_no, s_start, s_end = get_current_sprint_info(config)
 pic_stats = get_data_and_process(config)
+s_no, s_start, s_end = get_current_sprint_info(config)
 
 st.title(f"🚀 {st.session_state.selected_project}")
 st.subheader(f"🚩 Sprint {int(s_no)} ({s_start.strftime('%d/%m')} - {s_end.strftime('%d/%m')})")
@@ -120,18 +128,17 @@ if pic_stats is not None:
         with cols[i % 5]:
             st.metric(row['PIC'], f"{row['percent']}%")
             st.progress(min(row['percent']/100, 1.0))
+            # HIỂN THỊ GIỜ TRÊN WEB:
+            st.write(f"⏱️ **{round(float(row['real_total']), 1)}h** / {round(float(row['est_total']), 1)}h")
             st.write(f"✅ {int(row['done'])} | 🚧 {int(row['doing'])} | ⏳ Tồn: {int(row['pending'])}")
             st.divider()
     st.plotly_chart(px.bar(pic_stats, x='PIC', y=['est_total', 'real_total'], barmode='group'), use_container_width=True)
 
-# --- 6. PHẦN DÀNH CHO GITHUB ACTIONS ---
+# --- 6. GITHUB ACTIONS ---
 if __name__ == "__main__":
-    # Khi GitHub Actions chạy 'python app.py', nó sẽ nhảy vào đây
     import sys
-    # Chỉ chạy gửi báo cáo nếu không phải môi trường Streamlit
     if not any("streamlit" in arg for arg in sys.argv):
         for name, cfg in PROJECTS.items():
             stats = get_data_and_process(cfg)
             if stats is not None:
                 send_report_logic(name, cfg, stats)
-                print(f"Sent {name}")
