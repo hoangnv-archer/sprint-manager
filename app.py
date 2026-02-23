@@ -109,7 +109,7 @@ try:
         pic_stats['pending'] = pic_stats['total'] - pic_stats['done']
         pic_stats['percent'] = (pic_stats['done'] / pic_stats['total'] * 100).fillna(0).round(1)
 
-        # KHÔI PHỤC GIAO DIỆN BOX PIC TRÊN WEB
+        # Hiển thị Metrics dạng Box PIC
         cols = st.columns(5)
         for i, row in pic_stats.iterrows():
             with cols[i % 5]:
@@ -119,11 +119,11 @@ try:
                 st.caption(f"Est: {row['est_total']}h | Real: {row['real_total']}h")
                 st.write("---")
 
-        # --- LOGIC GỬI BÁO CÁO (TÍCH HỢP SPRINT & FORMAT RIÊNG) ---
+        # --- LOGIC GỬI BÁO CÁO (PHÂN BIỆT TELE & DISCORD) ---
         st.sidebar.divider()
         if st.sidebar.button(f"📤 Bắn báo cáo {config['platform']}"):
             if config['platform'] == "Discord":
-                # FORMAT DISCORD (ẢNH 1)
+                # FORMAT TEAM DEBUFFER (DISCORD - ẢNH 1)
                 msg = f"**{st.session_state.selected_project.upper()} - SPRINT {int(s_no)}**\n"
                 msg += f"({s_start.strftime('%d/%m')} - {s_end.strftime('%d/%m')})\n"
                 msg += "──────────────────────────────\n"
@@ -134,33 +134,34 @@ try:
                     msg += f"⏳ Chưa làm: {int(r['pending'])}\n"
                     msg += "──────────────────────────────\n"
                 requests.post(config['webhook_url'], json={"content": msg})
-                st.sidebar.success("Sent to Discord!")
+                st.sidebar.success("Đã gửi Discord!")
 
             else:
-                # FORMAT TELEGRAM (ẢNH 2)
+                # FORMAT TEAM INFINITY (TELEGRAM - ẢNH 2)
                 icons = ["🔧", "👽", "✨", "🌟", "🔍", "👾", "✏️", "💊"]
                 msg = f"🤖 **AUTO REPORT ({datetime.now(VN_TZ).strftime('%d/%m %H:%M')})**\n"
                 msg += f"🚩 **SPRINT {int(s_no)}**\n"
                 msg += "──────────────────────────────\n"
-                for i, (_, r) in enumerate(pic_stats.iterrows():
+                for i, (_, r) in enumerate(pic_stats.iterrows()):
                     icon = icons[i % len(icons)]
                     msg += f"{icon} **{r['PIC']}**\n"
                     msg += f"┣ Tiến độ: **{r['percent']}%**\n"
                     msg += f"┣ ✅ Xong: {int(r['done'])} | 🚧 Đang: {int(r['doing'])}\n"
                     msg += f"┗ ⌚ Giờ: {r['real_total']}h / {r['est_total']}h\n"
                     msg += "──────────────────────────────\n"
+                
                 url_tg = f"https://api.telegram.org/bot{config['bot_token']}/sendMessage"
                 payload = {"chat_id": config['chat_id'], "text": msg, "parse_mode": "Markdown"}
                 if "topic_id" in config: payload["message_thread_id"] = config['topic_id']
                 requests.post(url_tg, json=payload)
-                st.sidebar.success("Sent to Telegram!")
+                st.sidebar.success("Đã gửi Telegram!")
 
         # BIỂU ĐỒ & BẢNG CHI TIẾT
-        st.plotly_chart(px.bar(pic_stats, x='PIC', y=['est_total', 'real_total'], barmode='group', title="Thống kê giờ làm việc"), use_container_width=True)
+        st.plotly_chart(px.bar(pic_stats, x='PIC', y=['est_total', 'real_total'], barmode='group'), use_container_width=True)
         with st.expander("📋 Xem chi tiết danh sách Task"):
             st.dataframe(df_team[['Userstory/Todo', 'State', 'PIC', 'Estimate Dev', 'Real']], use_container_width=True)
 
     else:
         st.error("Không tìm thấy hàng tiêu đề 'Userstory/Todo'.")
 except Exception as e:
-    st.error(f"Lỗi: {e}")
+    st.error(f"Lỗi hệ thống: {e}")
