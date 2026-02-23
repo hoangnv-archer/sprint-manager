@@ -132,6 +132,7 @@ try:
                     msg += f"✅ **Xong/Cancel: {int(r['done'])}**\n"
                     msg += f"🚧 Đang làm: {int(r['doing'])}\n"
                     msg += f"⏳ Chưa làm: {int(r['pending'])}\n"
+                    msg += f"⏱️ Giờ: `{r['real_total']}h` / `{r['est_total']}h` (Real/Est)\n"
                     msg += "──────────────────────────────\n"
                 requests.post(config['webhook_url'], json={"content": msg})
                 st.sidebar.success("Đã gửi Discord!")
@@ -147,7 +148,7 @@ try:
                     msg += f"{icon} **{r['PIC']}**\n"
                     msg += f"┣ Tiến độ: **{r['percent']}%**\n"
                     msg += f"┣ ✅ Xong: {int(r['done'])} | 🚧 Đang: {int(r['doing'])}\n"
-                    msg += f"┗ ⌚ Giờ: {r['real_total']}h / {r['est_total']}h\n"
+                    msg += f"⏱️ Giờ: `{r['real_total']}h` / `{r['est_total']}h` (Real/Est)\n"
                     msg += "──────────────────────────────\n"
                 
                 url_tg = f"https://api.telegram.org/bot{config['bot_token']}/sendMessage"
