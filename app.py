@@ -152,7 +152,7 @@ try:
 
             if config['platform'] == "Discord":
                 # Thay URL Webhook của bạn vào đây
-                webhook_url = "YOUR_DISCORD_WEBHOOK_URL"
+                webhook_url = "https://discord.com/api/webhooks/1469191941261492386/gZ1sx5hnTojIKw5kp5quEotwIldRmCIlhXkZBu9M1Ejs-ZgEUtGsYHlS2CwIWguNbrzc"
                 requests.post(webhook_url, json={"content": msg})
                 st.sidebar.success("Đã gửi Discord!")
             else:
