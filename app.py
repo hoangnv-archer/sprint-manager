@@ -134,7 +134,7 @@ def send_report_logic(project_name, config, pic_stats):
         
         # Chỉ hiển thị số lượng, không liệt kê tên task
         if r['pending_count'] > 0:
-            msg += f"┗ ⏳ **Chưa làm: {int(r['pending_count'])} task**\n"
+            msg += f"┗ ⏳ **Chưa cập nhật State: {int(r['pending_count'])} task**\n"
         else:
             msg += f"┗ ✅ Đã cập nhật đủ trạng thái!\n"
         msg += "──────────────────────────────\n"
