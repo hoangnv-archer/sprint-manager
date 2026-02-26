@@ -104,20 +104,28 @@ def get_data_and_process(config_name):
             df_team = df[df['PIC'].isin(config['pics'])].copy()
             done_states = ['done', 'cancel', 'dev done']
             
+           def get_empty_state_tasks(x):
+                # Lọc những task của PIC này mà State_Clean là chuỗi rỗng
+                empty_tasks = x[x['State_Clean'] == '']['Userstory/Todo'].tolist()
+                return ", ".join(empty_tasks) if empty_tasks else "Không có"
+
             stats = df_team.groupby('PIC').agg(
                 total=('Userstory/Todo', 'count'),
                 done=('State_Clean', lambda x: x.isin(done_states).sum()),
                 doing=('State_Clean', lambda x: x.str.contains('progress').sum()),
                 est_total=('Estimate Dev', 'sum'),
-                real_total=('Real', 'sum')
+                real_total=('Real', 'sum'),
+                # Chỉ lấy danh sách tên task có state trống
+                pending_list=('PIC', lambda x: get_empty_state_tasks(df_team.loc[x.index]))
             ).reset_index()
             
             stats['percent'] = (stats['done'] / stats['total'] * 100).fillna(0).round(1)
-            stats['pending'] = stats['total'] - stats['done']
+            # Đếm số lượng task có state trống
+            stats['pending_count'] = stats['pending_list'].apply(lambda x: 0 if x == "Không có" else len(x.split(", ")))
+            
             return stats
         return None
     except Exception: return None
-
 # --- 5. HÀM GỬI TIN NHẮN ---
 def send_report_logic(project_name, config, pic_stats):
     s_no, s_start, s_end = get_current_sprint_info(config)
