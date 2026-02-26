@@ -130,7 +130,6 @@ def send_report_logic(project_name, config, pic_stats):
             msg += f"🟢 **{r['PIC']}**: `{r['percent']}%` hoàn thành\n✅ Xong: {int(r['done'])} | 🚧 Đang: {int(r['doing'])}\n⏱️ Giờ: `{round(float(r['real_total']), 1)}h` / `{round(float(r['est_total']), 1)}h` (Real/Est)\n──────────────────────────────\n"
         requests.post(config['webhook_url'], json={"content": msg})
     else:
-        icons = ["🔧", "👽", "✨", "🌟", "🔍", "👾", "✏️", "💊"]
         msg = f"🤖 **AUTO REPORT ({time_str})**\n🚩 **SPRINT {int(s_no)}** ({s_start.strftime('%d/%m')} - {s_end.strftime('%d/%m')})\n──────────────────────────────\n"
         for i, (_, r) in enumerate(pic_stats.iterrows()):
             icon = icons[i % len(icons)]
