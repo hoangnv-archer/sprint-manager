@@ -11,7 +11,7 @@ VN_TZ = timezone(timedelta(hours=7))
 
 def get_current_sprint_info(config):
     now = datetime.now(VN_TZ).date()
-    base_date = datetime.strptime(config['sprint_start_date'], f"%Y-%m-%d").date()
+    base_date = datetime.strptime(config['sprint_start_date'], "%Y-%m-%d").date()
     base_sprint_no = config['base_sprint_no']
     days_diff = (now - base_date).days
     sprint_elapsed = max(0, days_diff // 14)
@@ -39,16 +39,26 @@ PROJECTS = {
         "webhook_url": "YOUR_DISCORD_WEBHOOK_URL",
         "sprint_start_date": "2026-02-16", 
         "base_sprint_no": 6
+    },
+    # --- THÊM DỰ ÁN MỚI TẠI ĐÂY ---
+    "Sprint Team Skybow": {
+        "url": "https://docs.google.com/spreadsheets/d/157YuS6Sq_Sr6GGl-Ze0Jb0vaIbXZMvlZmU1Yqni-6g4/edit?pli=1&gid=982443592#gid=982443592",
+        "pics": ['Đạt', 'Bình', 'QA', 'Lâm', 'Hồng'],
+        "platform": "Telegram", # Hoặc Discord
+        "bot_token": "8722643729:AAGSvJtZVMRj-Wi2KwTctXSlJdWfMyVyxi8",
+        "chat_id": "-1003176404805I",
+        "topic_id": 2447, # Để 0 nếu không dùng Topic/Thread
+        "sprint_start_date": "2026-02-24", # Ngày bắt đầu Sprint 1 của dự án này
+        "base_sprint_no": 13
     }
 }
 
-# --- 3. HÀM XỬ LÝ DATA (Tối ưu cache để tránh lỗi Quota 429) ---
-@st.cache_data(ttl=300) # Lưu cache 5 phút cho giao diện Web
+# --- 3. HÀM XỬ LÝ DATA (Có Cache tránh lỗi 429) ---
+@st.cache_data(ttl=300)
 def get_data_and_process(config_name):
     config = PROJECTS[config_name]
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
-        # Tải toàn bộ sheet một lần duy nhất
         df_raw = conn.read(spreadsheet=config['url'], header=None, ttl=0)
         header_idx = next((i for i, row in df_raw.iterrows() if "Userstory/Todo" in row.values), None)
         
@@ -58,11 +68,9 @@ def get_data_and_process(config_name):
             df = df[1:].reset_index(drop=True)
             df.columns = [str(c).strip() for c in df.columns]
             
-            # Làm sạch dữ liệu
             df['PIC'] = df['PIC'].fillna('').astype(str).str.strip()
             df['State_Clean'] = df['State'].fillna('None').astype(str).str.strip().str.lower()
             
-            # Ép kiểu giờ (Xử lý dấu phẩy và chữ 'h')
             for col in ['Estimate Dev', 'Real']:
                 if col in df.columns:
                     df[col] = df[col].astype(str).str.replace('h', '', case=False).str.replace(',', '.')
@@ -83,12 +91,10 @@ def get_data_and_process(config_name):
             stats['pending'] = stats['total'] - stats['done']
             return stats
         return None
-    except Exception as e:
-        if "--action" not in sys.argv:
-            st.error(f"Lỗi kết nối GSheets: {e}")
+    except Exception:
         return None
 
-# --- 4. HÀM GỬI TIN NHẮN (Đồng bộ format tuyệt đối) ---
+# --- 4. HÀM GỬI TIN NHẮN ---
 def send_report_logic(project_name, config, pic_stats):
     s_no, s_start, s_end = get_current_sprint_info(config)
     time_str = datetime.now(VN_TZ).strftime('%H:%M')
@@ -107,29 +113,23 @@ def send_report_logic(project_name, config, pic_stats):
         
         url_tg = f"https://api.telegram.org/bot{config['bot_token']}/sendMessage"
         payload = {"chat_id": config['chat_id'], "text": msg, "parse_mode": "Markdown"}
-        if "topic_id" in config: payload["message_thread_id"] = config['topic_id']
+        if "topic_id" in config and config['topic_id'] != 0: 
+            payload["message_thread_id"] = config['topic_id']
         requests.post(url_tg, json=payload)
 
-# --- 5. LOGIC CHẠY (PHÂN BIỆT MÔI TRƯỜNG) ---
-
-# TRƯỜNG HỢP 1: CHẠY QUA GITHUB ACTIONS (Có tham số --action)
+# --- 5. LOGIC CHẠY ---
 if "--action" in sys.argv:
     for name in PROJECTS.keys():
-        # Gọi hàm xử lý (bỏ qua cache của streamlit khi chạy script)
         stats = get_data_and_process.__wrapped__(name)
         if stats is not None:
             send_report_logic(name, PROJECTS[name], stats)
-            print(f"Successfully sent report for {name}")
-    sys.exit(0) # Thoát ngay lập tức để tránh loop
+    sys.exit(0)
 
-# TRƯỜNG HỢP 2: CHẠY GIAO DIỆN WEB (STREAMLIT)
 st.set_page_config(page_title="Sprint Dashboard", layout="wide")
-
 if 'selected_project' not in st.session_state:
     st.session_state.selected_project = list(PROJECTS.keys())[0]
 
-# Sidebar chọn dự án
-st.sidebar.title("📁 Dự án")
+st.sidebar.title("📁 Quản lý dự án")
 for name, p_cfg in PROJECTS.items():
     s_no_side, _, _ = get_current_sprint_info(p_cfg)
     btn_type = "primary" if st.session_state.selected_project == name else "secondary"
@@ -137,7 +137,6 @@ for name, p_cfg in PROJECTS.items():
         st.session_state.selected_project = name
         st.rerun()
 
-# Hiển thị dữ liệu
 config = PROJECTS[st.session_state.selected_project]
 pic_stats = get_data_and_process(st.session_state.selected_project)
 s_no, s_start, s_end = get_current_sprint_info(config)
@@ -160,5 +159,3 @@ if pic_stats is not None:
             st.write(f"✅ {int(row['done'])} | 🚧 {int(row['doing'])} | ⏳ Tồn: {int(row['pending'])}")
             st.divider()
     st.plotly_chart(px.bar(pic_stats, x='PIC', y=['est_total', 'real_total'], barmode='group'), use_container_width=True)
-else:
-    st.warning("Đang tải dữ liệu hoặc gặp lỗi Quota. Vui lòng thử lại sau 1 phút.")
