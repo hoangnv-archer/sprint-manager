@@ -11,27 +11,11 @@ VN_TZ = timezone(timedelta(hours=7))
 
 # --- 2. ĐỊNH NGHĨA ICON CHO TỪNG NGƯỜI (PIC) ---
 PIC_ICONS = {
-    "Chuân": "🔧",
-    "Việt": "💊",
-    "Thắng": "✏️",
-    "QA": "🔍",
-    "Mai": "🌟",
-    "Hải Anh": "✨",
-    "Thuật": "🧬",
-    "Hiếu": "💎",
-    "Tài": "💰",
-    "Dương": "🌊",
-    "Quân": "⚔️",
-    "Phú": "🏦",
-    "Thịnh": "📈",
-    "Đô": "🏰",
-    "Tùng": "🌲",
-    "Anim": "🎬",
-    "Thắng VFX": "🎆",
-    "Đạt": "🦥",
-    "Bình": "🍶",
-    "Hồng": "🌹",
-    "Lâm": "🌲"
+    "Chuân": "🔧", "Việt": "💊", "Thắng": "✏️", "QA": "🔍",
+    "Mai": "🌟", "Hải Anh": "✨", "Thuật": "🧬", "Hiếu": "💎",
+    "Tài": "💰", "Dương": "🌊", "Quân": "⚔️", "Phú": "🏦",
+    "Thịnh": "📈", "Đô": "🏰", "Tùng": "🌲", "Anim": "🎬",
+    "Thắng VFX": "🎆", "Đạt": "🦥", "Bình": "🍶", "Hồng": "🌹", "Lâm": "🌲"
 }
 DEFAULT_ICON = "👤"
 
@@ -69,16 +53,16 @@ PROJECTS = {
     "Sprint Team Skybow": {
         "url": "https://docs.google.com/spreadsheets/d/157YuS6Sq_Sr6GGl-Ze0Jb0vaIbXZMvlZmU1Yqni-6g4/edit?pli=1&gid=982443592#gid=982443592",
         "pics": ['Đạt', 'Bình', 'QA', 'Lâm', 'Hồng'],
-        "platform": "Telegram", # Hoặc Discord
+        "platform": "Telegram",
         "bot_token": "8722643729:AAGSvJtZVMRj-Wi2KwTctXSlJdWfMyVyxi8",
-        "chat_id": "-1003176404805I",
-        "topic_id": 2447, # Để 0 nếu không dùng Topic/Thread
-        "sprint_start_date": "2026-02-24", # Ngày bắt đầu Sprint 1 của dự án này
+        "chat_id": "-1003176404805", # Đã xóa chữ I thừa ở cuối
+        "topic_id": 2447,
+        "sprint_start_date": "2026-02-24",
         "base_sprint_no": 13
     }
 }
 
-# --- 4. HÀM XỬ LÝ DATA (Có Cache) ---
+# --- 4. HÀM XỬ LÝ DATA (Fix logic đếm task trống) ---
 @st.cache_data(ttl=300)
 def get_data_and_process(config_name):
     config = PROJECTS[config_name]
@@ -94,7 +78,8 @@ def get_data_and_process(config_name):
             df.columns = [str(c).strip() for c in df.columns]
             
             df['PIC'] = df['PIC'].fillna('').astype(str).str.strip()
-            df['State_Clean'] = df['State'].fillna('None').astype(str).str.strip().str.lower()
+            df['Userstory/Todo'] = df['Userstory/Todo'].fillna('').astype(str).str.strip()
+            df['State_Clean'] = df['State'].fillna('').astype(str).str.strip().str.lower()
             
             for col in ['Estimate Dev', 'Real']:
                 if col in df.columns:
@@ -104,9 +89,9 @@ def get_data_and_process(config_name):
             df_team = df[df['PIC'].isin(config['pics'])].copy()
             done_states = ['done', 'cancel', 'dev done']
             
-           def get_empty_state_tasks(x):
-                # Lọc những task của PIC này mà State_Clean là chuỗi rỗng
-                empty_tasks = x[x['State_Clean'] == '']['Userstory/Todo'].tolist()
+            def get_empty_state_tasks(pic_name, full_df):
+                pic_data = full_df[full_df['PIC'] == pic_name]
+                empty_tasks = pic_data[pic_data['State_Clean'] == '']['Userstory/Todo'].tolist()
                 return ", ".join(empty_tasks) if empty_tasks else "Không có"
 
             stats = df_team.groupby('PIC').agg(
@@ -114,35 +99,38 @@ def get_data_and_process(config_name):
                 done=('State_Clean', lambda x: x.isin(done_states).sum()),
                 doing=('State_Clean', lambda x: x.str.contains('progress').sum()),
                 est_total=('Estimate Dev', 'sum'),
-                real_total=('Real', 'sum'),
-                # Chỉ lấy danh sách tên task có state trống
-                pending_list=('PIC', lambda x: get_empty_state_tasks(df_team.loc[x.index]))
+                real_total=('Real', 'sum')
             ).reset_index()
             
+            stats['pending_list'] = stats['PIC'].apply(lambda x: get_empty_state_tasks(x, df_team))
             stats['percent'] = (stats['done'] / stats['total'] * 100).fillna(0).round(1)
-            # Đếm số lượng task có state trống
             stats['pending_count'] = stats['pending_list'].apply(lambda x: 0 if x == "Không có" else len(x.split(", ")))
             
             return stats
         return None
     except Exception: return None
-# --- 5. HÀM GỬI TIN NHẮN ---
+
+# --- 5. HÀM GỬI TIN NHẮN (Đã thêm phần Task tồn) ---
 def send_report_logic(project_name, config, pic_stats):
     s_no, s_start, s_end = get_current_sprint_info(config)
     time_str = datetime.now(VN_TZ).strftime('%H:%M')
     
+    msg = f"🤖 **AUTO REPORT ({time_str})**\n🚩 **{project_name.upper()} - SPRINT {int(s_no)}**\n──────────────────────────────\n"
+    for _, r in pic_stats.iterrows():
+        icon = PIC_ICONS.get(r['PIC'], DEFAULT_ICON)
+        msg += f"{icon} **{r['PIC']}**\n"
+        msg += f"┣ Tiến độ: **{r['percent']}%**\n"
+        msg += f"┣ ✅ Xong: {int(r['done'])} | 🚧 Đang: {int(r['doing'])}\n"
+        msg += f"┣ ⌚ Giờ: {round(float(r['real_total']), 1)}h / {round(float(r['est_total']), 1)}h\n"
+        if r['pending_count'] > 0:
+            msg += f"┗ ⏳ **Trống State:** _{r['pending_list']}_\n"
+        else:
+            msg += f"┗ ✅ Đã điền State đủ!\n"
+        msg += "──────────────────────────────\n"
+
     if config['platform'] == "Discord":
-        msg = f"**{project_name.upper()} - SPRINT {int(s_no)}**\n({s_start.strftime('%d/%m')} - {s_end.strftime('%d/%m')})\n──────────────────────────────\n"
-        for _, r in pic_stats.iterrows():
-            icon = PIC_ICONS.get(r['PIC'], DEFAULT_ICON)
-            msg += f"{icon} **{r['PIC']}**: `{r['percent']}%` hoàn thành\n✅ Xong: {int(r['done'])} | 🚧 Đang: {int(r['doing'])}\n⏱️ Giờ: `{round(float(r['real_total']), 1)}h` / `{round(float(r['est_total']), 1)}h` (Real/Est)\n──────────────────────────────\n"
         requests.post(config['webhook_url'], json={"content": msg})
     else:
-        msg = f"🤖 **AUTO REPORT ({time_str})**\n🚩 **SPRINT {int(s_no)}** ({s_start.strftime('%d/%m')} - {s_end.strftime('%d/%m')})\n──────────────────────────────\n"
-        for _, r in pic_stats.iterrows():
-            icon = PIC_ICONS.get(r['PIC'], DEFAULT_ICON)
-            msg += f"{icon} **{r['PIC']}**\n┣ Tiến độ: **{r['percent']}%**\n┣ ✅ Xong: {int(r['done'])} | 🚧 Đang: {int(r['doing'])}\n┗ ⌚ Giờ: {round(float(r['real_total']), 1)}h / {round(float(r['est_total']), 1)}h\n──────────────────────────────\n"
-        
         url_tg = f"https://api.telegram.org/bot{config['bot_token']}/sendMessage"
         payload = {"chat_id": config['chat_id'], "text": msg, "parse_mode": "Markdown"}
         if "topic_id" in config and config['topic_id'] != 0: 
@@ -157,6 +145,7 @@ if "--action" in sys.argv:
             send_report_logic(name, PROJECTS[name], stats)
     sys.exit(0)
 
+# (Phần giao diện Web giữ nguyên, chỉ sửa row['pending'] thành row['pending_count'])
 st.set_page_config(page_title="Sprint Dashboard", layout="wide")
 if 'selected_project' not in st.session_state:
     st.session_state.selected_project = list(PROJECTS.keys())[0]
@@ -189,6 +178,10 @@ if isinstance(pic_stats, pd.DataFrame):
             st.metric(f"{user_icon} {row['PIC']}", f"{row['percent']}%")
             st.progress(min(row['percent']/100, 1.0))
             st.write(f"⏱️ **{round(float(row['real_total']), 1)}h** / {round(float(row['est_total']), 1)}h")
-            st.write(f"✅ {int(row['done'])} | 🚧 {int(row['doing'])} | ⏳ Tồn: {int(row['pending'])}")
+            # Sửa lỗi row['pending'] ở đây:
+            st.write(f"✅ {int(row['done'])} | 🚧 {int(row['doing'])} | ⏳ Tồn: {int(row['pending_count'])}")
+            if row['pending_count'] > 0:
+                with st.expander("Xem task trống State"):
+                    st.caption(row['pending_list'])
             st.divider()
     st.plotly_chart(px.bar(pic_stats, x='PIC', y=['est_total', 'real_total'], barmode='group'), use_container_width=True)
