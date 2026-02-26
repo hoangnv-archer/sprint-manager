@@ -52,17 +52,17 @@ PROJECTS = {
     },
     "Sprint Team Skybow": {
         "url": "https://docs.google.com/spreadsheets/d/157YuS6Sq_Sr6GGl-Ze0Jb0vaIbXZMvlZmU1Yqni-6g4/edit?pli=1&gid=982443592#gid=982443592",
-        "pics": ['Đạt', 'Bình', 'QA', 'Lâm', 'Hồng','An'],
+        "pics": ['Đạt', 'Bình', 'QA', 'Lâm', 'Hồng', 'An'],
         "platform": "Telegram",
         "bot_token": "8722643729:AAGSvJtZVMRj-Wi2KwTctXSlJdWfMyVyxi8",
-        "chat_id": "-1003176404805", # Đã xóa chữ I thừa ở cuối
+        "chat_id": "-1003176404805",
         "topic_id": 2447,
         "sprint_start_date": "2026-02-24",
         "base_sprint_no": 13
     }
 }
 
-# --- 4. HÀM XỬ LÝ DATA (Fix logic đếm task trống) ---
+# --- 4. HÀM XỬ LÝ DATA ---
 @st.cache_data(ttl=300)
 def get_data_and_process(config_name):
     config = PROJECTS[config_name]
@@ -77,9 +77,13 @@ def get_data_and_process(config_name):
             df = df[1:].reset_index(drop=True)
             df.columns = [str(c).strip() for c in df.columns]
             
+            # Tiền xử lý dữ liệu
             df['PIC'] = df['PIC'].fillna('').astype(str).str.strip()
             df['Userstory/Todo'] = df['Userstory/Todo'].fillna('').astype(str).str.strip()
             df['State_Clean'] = df['State'].fillna('').astype(str).str.strip().str.lower()
+            
+            # Lọc bỏ dòng rỗng hoàn toàn
+            df = df[df['Userstory/Todo'] != ""]
             
             for col in ['Estimate Dev', 'Real']:
                 if col in df.columns:
@@ -89,10 +93,11 @@ def get_data_and_process(config_name):
             df_team = df[df['PIC'].isin(config['pics'])].copy()
             done_states = ['done', 'cancel', 'dev done']
             
-            def get_empty_state_tasks(pic_name, full_df):
-                pic_data = full_df[full_df['PIC'] == pic_name]
+            # Hàm lấy danh sách task và đếm chính xác
+            def get_pending_info(pic_name):
+                pic_data = df_team[df_team['PIC'] == pic_name]
                 empty_tasks = pic_data[pic_data['State_Clean'] == '']['Userstory/Todo'].tolist()
-                return ", ".join(empty_tasks) if empty_tasks else "Không có"
+                return (", ".join(empty_tasks) if empty_tasks else "Không có"), len(empty_tasks)
 
             stats = df_team.groupby('PIC').agg(
                 total=('Userstory/Todo', 'count'),
@@ -102,15 +107,19 @@ def get_data_and_process(config_name):
                 real_total=('Real', 'sum')
             ).reset_index()
             
-            stats['pending_list'] = stats['PIC'].apply(lambda x: get_empty_state_tasks(x, df_team))
+            # Áp dụng hàm bổ trợ
+            temp_pending = stats['PIC'].apply(get_pending_info)
+            stats['pending_list'] = [x[0] for x in temp_pending]
+            stats['pending_count'] = [x[1] for x in temp_pending]
             stats['percent'] = (stats['done'] / stats['total'] * 100).fillna(0).round(1)
-            stats['pending_count'] = stats['pending_list'].apply(lambda x: 0 if x == "Không có" else len(x.split(", ")))
             
             return stats
         return None
-    except Exception: return None
+    except Exception as e:
+        st.error(f"Lỗi đọc dữ liệu: {e}")
+        return None
 
-# --- 5. HÀM GỬI TIN NHẮN (Đã thêm phần Task tồn) ---
+# --- 5. HÀM GỬI TIN NHẮN ---
 def send_report_logic(project_name, config, pic_stats):
     s_no, s_start, s_end = get_current_sprint_info(config)
     time_str = datetime.now(VN_TZ).strftime('%H:%M')
@@ -128,16 +137,19 @@ def send_report_logic(project_name, config, pic_stats):
             msg += f"┗ ✅ Đã điền State đủ!\n"
         msg += "──────────────────────────────\n"
 
-    if config['platform'] == "Discord":
-        requests.post(config['webhook_url'], json={"content": msg})
-    else:
-        url_tg = f"https://api.telegram.org/bot{config['bot_token']}/sendMessage"
-        payload = {"chat_id": config['chat_id'], "text": msg, "parse_mode": "Markdown"}
-        if "topic_id" in config and config['topic_id'] != 0: 
-            payload["message_thread_id"] = config['topic_id']
-        requests.post(url_tg, json=payload)
+    try:
+        if config['platform'] == "Discord":
+            requests.post(config['webhook_url'], json={"content": msg}, timeout=10)
+        else:
+            url_tg = f"https://api.telegram.org/bot{config['bot_token']}/sendMessage"
+            payload = {"chat_id": config['chat_id'], "text": msg, "parse_mode": "Markdown"}
+            if "topic_id" in config and config['topic_id'] != 0: 
+                payload["message_thread_id"] = config['topic_id']
+            requests.post(url_tg, json=payload, timeout=10)
+    except Exception as e:
+        st.error(f"Lỗi gửi tin nhắn: {e}")
 
-# --- 6. LOGIC CHẠY (GITHUB ACTIONS VS WEB) ---
+# --- 6. GIAO DIỆN & LOGIC CHẠY ---
 if "--action" in sys.argv:
     for name in PROJECTS.keys():
         stats = get_data_and_process.__wrapped__(name)
@@ -145,7 +157,6 @@ if "--action" in sys.argv:
             send_report_logic(name, PROJECTS[name], stats)
     sys.exit(0)
 
-# (Phần giao diện Web giữ nguyên, chỉ sửa row['pending'] thành row['pending_count'])
 st.set_page_config(page_title="Sprint Dashboard", layout="wide")
 if 'selected_project' not in st.session_state:
     st.session_state.selected_project = list(PROJECTS.keys())[0]
@@ -178,7 +189,6 @@ if isinstance(pic_stats, pd.DataFrame):
             st.metric(f"{user_icon} {row['PIC']}", f"{row['percent']}%")
             st.progress(min(row['percent']/100, 1.0))
             st.write(f"⏱️ **{round(float(row['real_total']), 1)}h** / {round(float(row['est_total']), 1)}h")
-            # Sửa lỗi row['pending'] ở đây:
             st.write(f"✅ {int(row['done'])} | 🚧 {int(row['doing'])} | ⏳ Tồn: {int(row['pending_count'])}")
             if row['pending_count'] > 0:
                 with st.expander("Xem task trống State"):
