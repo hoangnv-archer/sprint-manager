@@ -77,45 +77,53 @@ def get_data_and_process(config_name):
             df.columns = df.iloc[0]
             df = df[1:].reset_index(drop=True)
             df.columns = [str(c).strip() for c in df.columns]
-            
-            # --- TỰ ĐỘNG NHẬN DIỆN CỘT (Fix lỗi 'Userstory') ---
-            col_map = {c.lower().replace(" ", ""): c for c in df.columns}
-            us_col = col_map.get('userstory', col_map.get('userstory/todo', df.columns[0]))
-            pic_col = col_map.get('pic', 'PIC')
-            todo_col = col_map.get('userstory/todo', df.columns[1])
-            state_col = col_map.get('state', 'State')
 
-            df['PIC_Clean'] = df[pic_col].fillna('').astype(str).str.strip()
-            df['US_Clean'] = df[us_col].fillna('Khác').astype(str).str.strip()
-            df['Todo_Clean'] = df[todo_col].fillna('').astype(str).str.strip()
-            df['State_Clean'] = df[state_col].fillna('').astype(str).str.strip().str.lower()
+            # Xử lý gán Userstory cho từng dòng Task
+            current_us = "General"
+            processed_data = []
             
-            df = df[df['Todo_Clean'] != ""]
+            for _, row in df.iterrows():
+                title = str(row.get('Userstory/Todo', '')).strip()
+                pic = str(row.get('PIC', '')).strip()
+                state = str(row.get('State', '')).strip()
+                
+                if not title: continue
+                
+                # Logic: Nếu không có PIC và không có State -> Đây là dòng Userstory
+                if (not pic or pic == 'nan') and (not state or state == 'nan'):
+                    current_us = title
+                else:
+                    # Đây là một Task
+                    row_data = row.to_dict()
+                    row_data['Assigned_US'] = current_us
+                    processed_data.append(row_data)
             
-            for col in ['Estimate Dev', 'Real']:
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col].astype(str).str.replace('h','').str.replace(',','.'), errors='coerce').fillna(0)
-                else: df[col] = 0
+            df_final = pd.DataFrame(processed_data)
+            df_final['PIC_Clean'] = df_final['PIC'].fillna('').astype(str).str.strip()
+            df_final['State_Clean'] = df_final['State'].fillna('').astype(str).str.strip().str.lower()
             
-            df_team = df[df['PIC_Clean'].isin(config['pics'])].copy()
+            # Chỉ lấy dữ liệu của team
+            df_team = df_final[df_final['PIC_Clean'].isin(config['pics'])].copy()
             done_states = ['done', 'cancel', 'dev done']
             
+            # Thống kê
             stats = df_team.groupby('PIC_Clean').agg(
-                total=('Todo_Clean', 'count'),
+                total=('Userstory/Todo', 'count'),
                 done=('State_Clean', lambda x: x.isin(done_states).sum()),
                 doing=('State_Clean', lambda x: x.str.contains('progress').sum()),
-                est_total=('Estimate Dev', 'sum'),
-                real_total=('Real', 'sum')
+                est_total=('Estimate Dev', lambda x: pd.to_numeric(x.astype(str).str.replace('h',''), errors='coerce').sum()),
+                real_total=('Real', lambda x: pd.to_numeric(x.astype(str).str.replace('h',''), errors='coerce').sum())
             ).reset_index()
             stats.rename(columns={'PIC_Clean': 'PIC'}, inplace=True)
 
-            def get_grouped_tasks(pic):
+            # Gom nhóm task trống state theo US (Chỉ dùng cho App)
+            def get_grouped_pending(pic):
                 pending = df_team[(df_team['PIC_Clean'] == pic) & (df_team['State_Clean'] == '')]
                 if pending.empty: return {}, 0
-                grouped = pending.groupby('US_Clean')['Todo_Clean'].apply(list).to_dict()
+                grouped = pending.groupby('Assigned_US')['Userstory/Todo'].apply(list).to_dict()
                 return grouped, len(pending)
 
-            res = stats['PIC'].apply(get_grouped_tasks)
+            res = stats['PIC'].apply(get_grouped_pending)
             stats['pending_grouped'] = [x[0] for x in res]
             stats['pending_count'] = [x[1] for x in res]
             stats['percent'] = (stats['done'] / stats['total'] * 100).fillna(0).round(1)
@@ -123,19 +131,21 @@ def get_data_and_process(config_name):
             return stats
         return None
     except Exception as e:
-        st.error(f"Lỗi đọc dữ liệu: {e}")
+        st.error(f"Lỗi: {e}")
         return None
 
-# --- GỬI BÁO CÁO ---
+# --- GỬI BÁO CÁO (Chỉ hiện tổng số) ---
 def send_report_logic(project_name, config, pic_stats):
     s_no, s_start, s_end = get_current_sprint_info(config)
     time_str = datetime.now(VN_TZ).strftime('%H:%M')
     msg = f"🤖 **AUTO REPORT ({time_str})**\n🚩 **{project_name.upper()} - SPRINT {int(s_no)}**\n──────────────────────────────\n"
     for _, r in pic_stats.iterrows():
         icon = PIC_ICONS.get(r['PIC'], DEFAULT_ICON)
-        msg += f"{icon} **{r['PIC']}**\n┣ Tiến độ: **{r['percent']}%**\n┣ ✅ Xong: {int(r['done'])} | 🚧 Đang: {int(r['doing'])}\n┣ ⌚ Giờ: {round(float(r['real_total']), 1)}h / {round(float(r['est_total']), 1)}h\n"
+        msg += f"{icon} **{r['PIC']}**\n┣ Tiến độ: **{r['percent']}%**\n┣ ✅ Xong: {int(r['done'])} | 🚧 Đang: {int(r['doing'])}\n"
+        
+        # Ở ĐÂY: Chỉ ghi tổng số, không liệt kê task
         if r['pending_count'] > 0:
-            msg += f"┗ ⏳ **Trống State: {int(r['pending_count'])} việc**\n"
+            msg += f"┗ ⏳ **Trống State: {int(r['pending_count'])} task**\n"
         else:
             msg += f"┗ ✅ Đã cập nhật đủ!\n"
         msg += "──────────────────────────────\n"
@@ -144,7 +154,7 @@ def send_report_logic(project_name, config, pic_stats):
         if config['platform'] == "Telegram":
             url = f"https://api.telegram.org/bot{config['bot_token']}/sendMessage"
             requests.post(url, json={"chat_id": config['chat_id'], "text": msg, "parse_mode": "Markdown", "message_thread_id": config.get('topic_id')}, timeout=10)
-        elif config['platform'] == "Discord" and "http" in str(config.get('webhook_url')):
+        elif config['platform'] == "Discord":
             requests.post(config['webhook_url'], json={"content": msg}, timeout=10)
     except: pass
 
@@ -162,7 +172,6 @@ for name in PROJECTS.keys():
         st.session_state.selected_project = name
         st.rerun()
 
-# Nội dung chính
 config = PROJECTS[st.session_state.selected_project]
 pic_stats = get_data_and_process(st.session_state.selected_project)
 
@@ -183,6 +192,7 @@ if pic_stats is not None:
             st.progress(min(row['percent']/100, 1.0))
             st.write(f"✅ {int(row['done'])} | ⏳ Tồn: **{int(row['pending_count'])}**")
             
+            # TRÊN APP: Hiển thị group theo Userstory
             if row['pending_count'] > 0:
                 with st.expander("Chi tiết task tồn"):
                     for us, tasks in row['pending_grouped'].items():
@@ -193,4 +203,4 @@ if pic_stats is not None:
     
     st.plotly_chart(px.bar(pic_stats, x='PIC', y=['est_total', 'real_total'], barmode='group'), use_container_width=True)
 else:
-    st.info("Đang kiểm tra dữ liệu file Google Sheet...")
+    st.info("Không tìm thấy dữ liệu phù hợp...")
