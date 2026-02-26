@@ -58,15 +58,14 @@ def get_current_sprint_info(config):
     current_sprint_end = current_sprint_start + timedelta(days=11)
     return current_sprint_no, current_sprint_start, current_sprint_end
 
-# --- XỬ LÝ DỮ LIỆU (Đã thêm Logs để debug) ---
-@st.cache_data(ttl=60) # Giảm TTL xuống 1 phút để cập nhật nhanh
+# --- XỬ LÝ DỮ LIỆU ---
+@st.cache_data(ttl=60)
 def get_data_and_process(config_name):
     config = PROJECTS[config_name]
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         df_raw = conn.read(spreadsheet=config['url'], header=None, ttl=0)
         
-        # Tìm dòng chứa header (linh hoạt hơn với khoảng trắng)
         header_idx = None
         for i, row in df_raw.iterrows():
             if any("Userstory/Todo" in str(val) for val in row.values):
@@ -79,39 +78,41 @@ def get_data_and_process(config_name):
             df = df[1:].reset_index(drop=True)
             df.columns = [str(c).strip() for c in df.columns]
             
-            # Kiểm tra các cột bắt buộc
-            required_cols = ['PIC', 'Userstory/Todo', 'State']
-            for col in required_cols:
-                if col not in df.columns:
-                    st.error(f"Sheet thiếu cột quan trọng: {col}")
-                    return None
+            # --- TỰ ĐỘNG NHẬN DIỆN CỘT (Fix lỗi 'Userstory') ---
+            col_map = {c.lower().replace(" ", ""): c for c in df.columns}
+            us_col = col_map.get('userstory', col_map.get('userstory/todo', df.columns[0]))
+            pic_col = col_map.get('pic', 'PIC')
+            todo_col = col_map.get('userstory/todo', df.columns[1])
+            state_col = col_map.get('state', 'State')
 
-            df['PIC'] = df['PIC'].fillna('').astype(str).str.strip()
-            df['Userstory'] = df['Userstory'].fillna('Khác').astype(str).str.strip()
-            df['Userstory/Todo'] = df['Userstory/Todo'].fillna('').astype(str).str.strip()
-            df['State_Clean'] = df['State'].fillna('').astype(str).str.strip().str.lower()
+            df['PIC_Clean'] = df[pic_col].fillna('').astype(str).str.strip()
+            df['US_Clean'] = df[us_col].fillna('Khác').astype(str).str.strip()
+            df['Todo_Clean'] = df[todo_col].fillna('').astype(str).str.strip()
+            df['State_Clean'] = df[state_col].fillna('').astype(str).str.strip().str.lower()
             
-            df = df[df['Userstory/Todo'] != ""]
+            df = df[df['Todo_Clean'] != ""]
             
             for col in ['Estimate Dev', 'Real']:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col].astype(str).str.replace('h','').str.replace(',','.'), errors='coerce').fillna(0)
+                else: df[col] = 0
             
-            df_team = df[df['PIC'].isin(config['pics'])].copy()
+            df_team = df[df['PIC_Clean'].isin(config['pics'])].copy()
             done_states = ['done', 'cancel', 'dev done']
             
-            stats = df_team.groupby('PIC').agg(
-                total=('Userstory/Todo', 'count'),
+            stats = df_team.groupby('PIC_Clean').agg(
+                total=('Todo_Clean', 'count'),
                 done=('State_Clean', lambda x: x.isin(done_states).sum()),
                 doing=('State_Clean', lambda x: x.str.contains('progress').sum()),
                 est_total=('Estimate Dev', 'sum'),
                 real_total=('Real', 'sum')
             ).reset_index()
+            stats.rename(columns={'PIC_Clean': 'PIC'}, inplace=True)
 
             def get_grouped_tasks(pic):
-                pending = df_team[(df_team['PIC'] == pic) & (df_team['State_Clean'] == '')]
+                pending = df_team[(df_team['PIC_Clean'] == pic) & (df_team['State_Clean'] == '')]
                 if pending.empty: return {}, 0
-                grouped = pending.groupby('Userstory')['Userstory/Todo'].apply(list).to_dict()
+                grouped = pending.groupby('US_Clean')['Todo_Clean'].apply(list).to_dict()
                 return grouped, len(pending)
 
             res = stats['PIC'].apply(get_grouped_tasks)
@@ -120,11 +121,9 @@ def get_data_and_process(config_name):
             stats['percent'] = (stats['done'] / stats['total'] * 100).fillna(0).round(1)
             
             return stats
-        else:
-            st.warning(f"Không tìm thấy dòng tiêu đề 'Userstory/Todo' trong file {config_name}")
-            return None
+        return None
     except Exception as e:
-        st.error(f"Lỗi hệ thống: {e}")
+        st.error(f"Lỗi đọc dữ liệu: {e}")
         return None
 
 # --- GỬI BÁO CÁO ---
@@ -145,19 +144,12 @@ def send_report_logic(project_name, config, pic_stats):
         if config['platform'] == "Telegram":
             url = f"https://api.telegram.org/bot{config['bot_token']}/sendMessage"
             requests.post(url, json={"chat_id": config['chat_id'], "text": msg, "parse_mode": "Markdown", "message_thread_id": config.get('topic_id')}, timeout=10)
-        elif config['platform'] == "Discord":
+        elif config['platform'] == "Discord" and "http" in str(config.get('webhook_url')):
             requests.post(config['webhook_url'], json={"content": msg}, timeout=10)
-    except: st.error("Không thể gửi tin nhắn báo cáo.")
+    except: pass
 
 # --- GIAO DIỆN WEB ---
 st.set_page_config(page_title="Sprint Dashboard", layout="wide")
-
-# Xử lý Github Action
-if "--action" in sys.argv:
-    for name, cfg in PROJECTS.items():
-        data = get_data_and_process.__wrapped__(name)
-        if isinstance(data, pd.DataFrame): send_report_logic(name, cfg, data)
-    sys.exit(0)
 
 if 'selected_project' not in st.session_state:
     st.session_state.selected_project = list(PROJECTS.keys())[0]
@@ -201,4 +193,4 @@ if pic_stats is not None:
     
     st.plotly_chart(px.bar(pic_stats, x='PIC', y=['est_total', 'real_total'], barmode='group'), use_container_width=True)
 else:
-    st.info("Đang tải dữ liệu hoặc không tìm thấy dữ liệu phù hợp...")
+    st.info("Đang kiểm tra dữ liệu file Google Sheet...")
