@@ -17,7 +17,6 @@ PIC_ICONS = {
 }
 DEFAULT_ICON = "👤"
 
-# --- 2. QUẢN LÝ DỰ ÁN ---
 PROJECTS = {
     "Sprint Team Infinity": {
         "url": "https://docs.google.com/spreadsheets/d/1hentY_r7GNVwJWM3wLT7LsA3PrXQidWnYahkfSwR9Kw/edit?pli=1&gid=982443592#gid=982443592",
@@ -52,22 +51,27 @@ PROJECTS = {
 def get_current_sprint_info(config):
     now = datetime.now(VN_TZ).date()
     base_date = datetime.strptime(config['sprint_start_date'], "%Y-%m-%d").date()
-    base_sprint_no = config['base_sprint_no']
     days_diff = (now - base_date).days
     sprint_elapsed = max(0, days_diff // 14)
-    current_sprint_no = base_sprint_no + sprint_elapsed
+    current_sprint_no = config['base_sprint_no'] + sprint_elapsed
     current_sprint_start = base_date + timedelta(days=sprint_elapsed * 14)
     current_sprint_end = current_sprint_start + timedelta(days=11)
     return current_sprint_no, current_sprint_start, current_sprint_end
 
-# --- 3. XỬ LÝ DỮ LIỆU ---
-@st.cache_data(ttl=300)
+# --- XỬ LÝ DỮ LIỆU (Đã thêm Logs để debug) ---
+@st.cache_data(ttl=60) # Giảm TTL xuống 1 phút để cập nhật nhanh
 def get_data_and_process(config_name):
     config = PROJECTS[config_name]
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         df_raw = conn.read(spreadsheet=config['url'], header=None, ttl=0)
-        header_idx = next((i for i, row in df_raw.iterrows() if "Userstory/Todo" in row.values), None)
+        
+        # Tìm dòng chứa header (linh hoạt hơn với khoảng trắng)
+        header_idx = None
+        for i, row in df_raw.iterrows():
+            if any("Userstory/Todo" in str(val) for val in row.values):
+                header_idx = i
+                break
         
         if header_idx is not None:
             df = df_raw.iloc[header_idx:].copy()
@@ -75,6 +79,13 @@ def get_data_and_process(config_name):
             df = df[1:].reset_index(drop=True)
             df.columns = [str(c).strip() for c in df.columns]
             
+            # Kiểm tra các cột bắt buộc
+            required_cols = ['PIC', 'Userstory/Todo', 'State']
+            for col in required_cols:
+                if col not in df.columns:
+                    st.error(f"Sheet thiếu cột quan trọng: {col}")
+                    return None
+
             df['PIC'] = df['PIC'].fillna('').astype(str).str.strip()
             df['Userstory'] = df['Userstory'].fillna('Khác').astype(str).str.strip()
             df['Userstory/Todo'] = df['Userstory/Todo'].fillna('').astype(str).str.strip()
@@ -89,7 +100,6 @@ def get_data_and_process(config_name):
             df_team = df[df['PIC'].isin(config['pics'])].copy()
             done_states = ['done', 'cancel', 'dev done']
             
-            # Grouping theo PIC
             stats = df_team.groupby('PIC').agg(
                 total=('Userstory/Todo', 'count'),
                 done=('State_Clean', lambda x: x.isin(done_states).sum()),
@@ -98,11 +108,9 @@ def get_data_and_process(config_name):
                 real_total=('Real', 'sum')
             ).reset_index()
 
-            # Logic Group theo Userstory cho App
             def get_grouped_tasks(pic):
                 pending = df_team[(df_team['PIC'] == pic) & (df_team['State_Clean'] == '')]
                 if pending.empty: return {}, 0
-                # Group: { Userstory: [Task1, Task2] }
                 grouped = pending.groupby('Userstory')['Userstory/Todo'].apply(list).to_dict()
                 return grouped, len(pending)
 
@@ -112,39 +120,39 @@ def get_data_and_process(config_name):
             stats['percent'] = (stats['done'] / stats['total'] * 100).fillna(0).round(1)
             
             return stats
+        else:
+            st.warning(f"Không tìm thấy dòng tiêu đề 'Userstory/Todo' trong file {config_name}")
+            return None
+    except Exception as e:
+        st.error(f"Lỗi hệ thống: {e}")
         return None
-    except: return None
 
-# --- 4. GỬI BÁO CÁO (Chỉ hiện số lượng) ---
+# --- GỬI BÁO CÁO ---
 def send_report_logic(project_name, config, pic_stats):
     s_no, s_start, s_end = get_current_sprint_info(config)
     time_str = datetime.now(VN_TZ).strftime('%H:%M')
-    
     msg = f"🤖 **AUTO REPORT ({time_str})**\n🚩 **{project_name.upper()} - SPRINT {int(s_no)}**\n──────────────────────────────\n"
     for _, r in pic_stats.iterrows():
         icon = PIC_ICONS.get(r['PIC'], DEFAULT_ICON)
         msg += f"{icon} **{r['PIC']}**\n┣ Tiến độ: **{r['percent']}%**\n┣ ✅ Xong: {int(r['done'])} | 🚧 Đang: {int(r['doing'])}\n┣ ⌚ Giờ: {round(float(r['real_total']), 1)}h / {round(float(r['est_total']), 1)}h\n"
-        
-        # Chỉ hiển thị số lượng tồn
         if r['pending_count'] > 0:
             msg += f"┗ ⏳ **Trống State: {int(r['pending_count'])} việc**\n"
         else:
-            msg += f"┗ ✅ Đã điền đủ trạng thái!\n"
+            msg += f"┗ ✅ Đã cập nhật đủ!\n"
         msg += "──────────────────────────────\n"
 
     try:
         if config['platform'] == "Telegram":
             url = f"https://api.telegram.org/bot{config['bot_token']}/sendMessage"
-            payload = {"chat_id": config['chat_id'], "text": msg, "parse_mode": "Markdown"}
-            if config.get('topic_id'): payload["message_thread_id"] = config['topic_id']
-            requests.post(url, json=payload, timeout=10)
+            requests.post(url, json={"chat_id": config['chat_id'], "text": msg, "parse_mode": "Markdown", "message_thread_id": config.get('topic_id')}, timeout=10)
         elif config['platform'] == "Discord":
             requests.post(config['webhook_url'], json={"content": msg}, timeout=10)
-    except: pass
+    except: st.error("Không thể gửi tin nhắn báo cáo.")
 
-# --- 5. GIAO DIỆN WEB ---
+# --- GIAO DIỆN WEB ---
 st.set_page_config(page_title="Sprint Dashboard", layout="wide")
 
+# Xử lý Github Action
 if "--action" in sys.argv:
     for name, cfg in PROJECTS.items():
         data = get_data_and_process.__wrapped__(name)
@@ -171,9 +179,9 @@ if pic_stats is not None:
     st.title(f"🚀 {st.session_state.selected_project}")
     st.subheader(f"🚩 Sprint {int(s_no)} ({s_start.strftime('%d/%m')} - {s_end.strftime('%d/%m')})")
     
-    if st.sidebar.button("📤 Bắn báo cáo"):
+    if st.sidebar.button("📤 Gửi báo cáo ngay"):
         send_report_logic(st.session_state.selected_project, config, pic_stats)
-        st.sidebar.success("Đã gửi!")
+        st.sidebar.success("Đã gửi báo cáo!")
 
     cols = st.columns(5)
     for i, row in pic_stats.iterrows():
@@ -183,7 +191,6 @@ if pic_stats is not None:
             st.progress(min(row['percent']/100, 1.0))
             st.write(f"✅ {int(row['done'])} | ⏳ Tồn: **{int(row['pending_count'])}**")
             
-            # Hiển thị Group theo Userstory trên App
             if row['pending_count'] > 0:
                 with st.expander("Chi tiết task tồn"):
                     for us, tasks in row['pending_grouped'].items():
@@ -193,3 +200,5 @@ if pic_stats is not None:
             st.divider()
     
     st.plotly_chart(px.bar(pic_stats, x='PIC', y=['est_total', 'real_total'], barmode='group'), use_container_width=True)
+else:
+    st.info("Đang tải dữ liệu hoặc không tìm thấy dữ liệu phù hợp...")
