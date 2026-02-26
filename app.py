@@ -67,6 +67,16 @@ PROJECTS = {
         "sprint_start_date": "2026-02-16", 
         "base_sprint_no": 6
     }
+     "Sprint Team Skybow": {
+        "url": "https://docs.google.com/spreadsheets/d/157YuS6Sq_Sr6GGl-Ze0Jb0vaIbXZMvlZmU1Yqni-6g4/edit?pli=1&gid=982443592#gid=982443592",
+        "pics": ['Đạt', 'Bình', 'QA', 'Lâm', 'Hồng'],
+        "platform": "Telegram", # Hoặc Discord
+        "bot_token": "8722643729:AAGSvJtZVMRj-Wi2KwTctXSlJdWfMyVyxi8",
+        "chat_id": "-1003176404805I",
+        "topic_id": 2447, # Để 0 nếu không dùng Topic/Thread
+        "sprint_start_date": "2026-02-24", # Ngày bắt đầu Sprint 1 của dự án này
+        "base_sprint_no": 13
+    }
 }
 
 # --- 4. HÀM XỬ LÝ DATA ---
