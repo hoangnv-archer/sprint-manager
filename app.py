@@ -9,8 +9,10 @@ import sys
 # --- 1. CỐ ĐỊNH MÚI GIỜ VIỆT NAM ---
 VN_TZ = timezone(timedelta(hours=7))
 
+# --- 2. ĐỊNH NGHĨA ICON CHO TỪNG NGƯỜI (PIC) ---
+# Bạn có thể thêm tên và icon tùy thích ở đây
 PIC_ICONS = {
-    "Chuân": "🔧",
+     "Chuân": "🔧",
     "Việt": "💊",
     "Thắng": "✏️",
     "QA": "🔍",
@@ -27,7 +29,7 @@ PIC_ICONS = {
     "Tùng": "🌲",
     "Anim": "🎬",
     "Thắng VFX": "🎆",
-    "Đạt": "🥃",
+    "Đạt": "🦥",
     "Bình": "🍶",
     "Hồng": "🌹",
     "Lâm": "🌲"
@@ -45,7 +47,7 @@ def get_current_sprint_info(config):
     current_sprint_end = current_sprint_start + timedelta(days=11)
     return current_sprint_no, current_sprint_start, current_sprint_end
 
-# --- 2. CẤU HÌNH DỰ ÁN ---
+# --- 3. CẤU HÌNH DỰ ÁN ---
 PROJECTS = {
     "Sprint Team Infinity": {
         "url": "https://docs.google.com/spreadsheets/d/1hentY_r7GNVwJWM3wLT7LsA3PrXQidWnYahkfSwR9Kw/edit?pli=1&gid=982443592#gid=982443592",
@@ -64,21 +66,10 @@ PROJECTS = {
         "webhook_url": "YOUR_DISCORD_WEBHOOK_URL",
         "sprint_start_date": "2026-02-16", 
         "base_sprint_no": 6
-    },
-    # --- THÊM DỰ ÁN MỚI TẠI ĐÂY ---
-    "Sprint Team Skybow": {
-        "url": "https://docs.google.com/spreadsheets/d/157YuS6Sq_Sr6GGl-Ze0Jb0vaIbXZMvlZmU1Yqni-6g4/edit?pli=1&gid=982443592#gid=982443592",
-        "pics": ['Đạt', 'Bình', 'QA', 'Lâm', 'Hồng'],
-        "platform": "Telegram", # Hoặc Discord
-        "bot_token": "8722643729:AAGSvJtZVMRj-Wi2KwTctXSlJdWfMyVyxi8",
-        "chat_id": "-1003176404805I",
-        "topic_id": 2447, # Để 0 nếu không dùng Topic/Thread
-        "sprint_start_date": "2026-02-24", # Ngày bắt đầu Sprint 1 của dự án này
-        "base_sprint_no": 13
     }
 }
 
-# --- 3. HÀM XỬ LÝ DATA (Có Cache tránh lỗi 429) ---
+# --- 4. HÀM XỬ LÝ DATA ---
 @st.cache_data(ttl=300)
 def get_data_and_process(config_name):
     config = PROJECTS[config_name]
@@ -116,10 +107,9 @@ def get_data_and_process(config_name):
             stats['pending'] = stats['total'] - stats['done']
             return stats
         return None
-    except Exception:
-        return None
+    except Exception: return None
 
-# --- 4. HÀM GỬI TIN NHẮN ---
+# --- 5. HÀM GỬI TIN NHẮN ---
 def send_report_logic(project_name, config, pic_stats):
     s_no, s_start, s_end = get_current_sprint_info(config)
     time_str = datetime.now(VN_TZ).strftime('%H:%M')
@@ -127,21 +117,23 @@ def send_report_logic(project_name, config, pic_stats):
     if config['platform'] == "Discord":
         msg = f"**{project_name.upper()} - SPRINT {int(s_no)}**\n({s_start.strftime('%d/%m')} - {s_end.strftime('%d/%m')})\n──────────────────────────────\n"
         for _, r in pic_stats.iterrows():
-            msg += f"🟢 **{r['PIC']}**: `{r['percent']}%` hoàn thành\n✅ Xong: {int(r['done'])} | 🚧 Đang: {int(r['doing'])}\n⏱️ Giờ: `{round(float(r['real_total']), 1)}h` / `{round(float(r['est_total']), 1)}h` (Real/Est)\n──────────────────────────────\n"
+            # Lấy icon riêng
+            icon = PIC_ICONS.get(r['PIC'], DEFAULT_ICON)
+            msg += f"{icon} **{r['PIC']}**: `{r['percent']}%` hoàn thành\n✅ Xong: {int(r['done'])} | 🚧 Đang: {int(r['doing'])}\n⏱️ Giờ: `{round(float(r['real_total']), 1)}h` / `{round(float(r['est_total']), 1)}h` (Real/Est)\n──────────────────────────────\n"
         requests.post(config['webhook_url'], json={"content": msg})
     else:
         msg = f"🤖 **AUTO REPORT ({time_str})**\n🚩 **SPRINT {int(s_no)}** ({s_start.strftime('%d/%m')} - {s_end.strftime('%d/%m')})\n──────────────────────────────\n"
-        for i, (_, r) in enumerate(pic_stats.iterrows()):
-            icon = icons[i % len(icons)]
+        for _, r in pic_stats.iterrows():
+            # Lấy icon riêng
+            icon = PIC_ICONS.get(r['PIC'], DEFAULT_ICON)
             msg += f"{icon} **{r['PIC']}**\n┣ Tiến độ: **{r['percent']}%**\n┣ ✅ Xong: {int(r['done'])} | 🚧 Đang: {int(r['doing'])}\n┗ ⌚ Giờ: {round(float(r['real_total']), 1)}h / {round(float(r['est_total']), 1)}h\n──────────────────────────────\n"
         
         url_tg = f"https://api.telegram.org/bot{config['bot_token']}/sendMessage"
         payload = {"chat_id": config['chat_id'], "text": msg, "parse_mode": "Markdown"}
-        if "topic_id" in config and config['topic_id'] != 0: 
-            payload["message_thread_id"] = config['topic_id']
+        if "topic_id" in config: payload["message_thread_id"] = config['topic_id']
         requests.post(url_tg, json=payload)
 
-# --- 5. LOGIC CHẠY ---
+# --- 6. LOGIC CHẠY ---
 if "--action" in sys.argv:
     for name in PROJECTS.keys():
         stats = get_data_and_process.__wrapped__(name)
@@ -177,7 +169,9 @@ if pic_stats is not None:
     cols = st.columns(5)
     for i, row in pic_stats.iterrows():
         with cols[i % 5]:
-            st.metric(row['PIC'], f"{row['percent']}%")
+            # Hiển thị icon trên web
+            user_icon = PIC_ICONS.get(row['PIC'], DEFAULT_ICON)
+            st.metric(f"{user_icon} {row['PIC']}", f"{row['percent']}%")
             st.progress(min(row['percent']/100, 1.0))
             st.write(f"⏱️ **{round(float(row['real_total']), 1)}h** / {round(float(row['est_total']), 1)}h")
             st.write(f"✅ {int(row['done'])} | 🚧 {int(row['doing'])} | ⏳ Tồn: {int(row['pending'])}")
