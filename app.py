@@ -9,6 +9,31 @@ import sys
 # --- 1. CỐ ĐỊNH MÚI GIỜ VIỆT NAM ---
 VN_TZ = timezone(timedelta(hours=7))
 
+PIC_ICONS = {
+    "Chuân": "🔧",
+    "Việt": "💊",
+    "Thắng": "✏️",
+    "QA": "🔍",
+    "Mai": "🌟",
+    "Hải Anh": "✨",
+    "Thuật": "🧬",
+    "Hiếu": "💎",
+    "Tài": "💰",
+    "Dương": "🌊",
+    "Quân": "⚔️",
+    "Phú": "🏦",
+    "Thịnh": "📈",
+    "Đô": "🏰",
+    "Tùng": "🌲",
+    "Anim": "🎬",
+    "Thắng VFX": "🎆"
+    "Đạt": "🦥",
+    "Bình": "🍶",
+    "Hồng": "🌹",
+    "Lâm": "🌲"
+}
+DEFAULT_ICON = "👤"
+
 def get_current_sprint_info(config):
     now = datetime.now(VN_TZ).date()
     base_date = datetime.strptime(config['sprint_start_date'], "%Y-%m-%d").date()
