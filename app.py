@@ -6,10 +6,8 @@ from datetime import datetime, timezone, timedelta
 import plotly.express as px
 import sys
 
-# --- 1. CỐ ĐỊNH MÚI GIỜ VIỆT NAM ---
+# --- 1. CẤU HÌNH HỆ THỐNG ---
 VN_TZ = timezone(timedelta(hours=7))
-
-# --- 2. ĐỊNH NGHĨA ICON CHO TỪNG NGƯỜI (PIC) ---
 PIC_ICONS = {
     "Chuân": "🔧", "Việt": "💊", "Thắng": "✏️", "QA": "🔍",
     "Mai": "🌟", "Hải Anh": "✨", "Thuật": "🧬", "Hiếu": "💎",
@@ -30,7 +28,7 @@ def get_current_sprint_info(config):
     current_sprint_end = current_sprint_start + timedelta(days=11)
     return current_sprint_no, current_sprint_start, current_sprint_end
 
-# --- 3. CẤU HÌNH CÁC DỰ ÁN ---
+# --- 2. DỮ LIỆU DỰ ÁN ---
 PROJECTS = {
     "Sprint Team Infinity": {
         "url": "https://docs.google.com/spreadsheets/d/1hentY_r7GNVwJWM3wLT7LsA3PrXQidWnYahkfSwR9Kw/edit?pli=1&gid=982443592#gid=982443592",
@@ -62,7 +60,7 @@ PROJECTS = {
     }
 }
 
-# --- 4. HÀM XỬ LÝ DATA ---
+# --- 3. XỬ LÝ DỮ LIỆU ---
 @st.cache_data(ttl=300)
 def get_data_and_process(config_name):
     config = PROJECTS[config_name]
@@ -77,12 +75,12 @@ def get_data_and_process(config_name):
             df = df[1:].reset_index(drop=True)
             df.columns = [str(c).strip() for c in df.columns]
             
-            # Tiền xử lý dữ liệu
+            # Làm sạch dữ liệu cơ bản
             df['PIC'] = df['PIC'].fillna('').astype(str).str.strip()
             df['Userstory/Todo'] = df['Userstory/Todo'].fillna('').astype(str).str.strip()
             df['State_Clean'] = df['State'].fillna('').astype(str).str.strip().str.lower()
+            df['Parent_US'] = df['Userstory'].fillna('Chưa rõ US').astype(str).str.strip()
             
-            # Lọc bỏ dòng rỗng hoàn toàn
             df = df[df['Userstory/Todo'] != ""]
             
             for col in ['Estimate Dev', 'Real']:
@@ -93,12 +91,7 @@ def get_data_and_process(config_name):
             df_team = df[df['PIC'].isin(config['pics'])].copy()
             done_states = ['done', 'cancel', 'dev done']
             
-            # Hàm lấy danh sách task và đếm chính xác
-            def get_pending_info(pic_name):
-                pic_data = df_team[df_team['PIC'] == pic_name]
-                empty_tasks = pic_data[pic_data['State_Clean'] == '']['Userstory/Todo'].tolist()
-                return (", ".join(empty_tasks) if empty_tasks else "Không có"), len(empty_tasks)
-
+            # Grouping dữ liệu cho App
             stats = df_team.groupby('PIC').agg(
                 total=('Userstory/Todo', 'count'),
                 done=('State_Clean', lambda x: x.isin(done_states).sum()),
@@ -107,19 +100,26 @@ def get_data_and_process(config_name):
                 real_total=('Real', 'sum')
             ).reset_index()
             
-            # Áp dụng hàm bổ trợ
-            temp_pending = stats['PIC'].apply(get_pending_info)
-            stats['pending_list'] = [x[0] for x in temp_pending]
-            stats['pending_count'] = [x[1] for x in temp_pending]
+            # Logic lấy Task trống state và group theo US (Dành cho App)
+            def get_grouped_pending(pic):
+                pending_df = df_team[(df_team['PIC'] == pic) & (df_team['State_Clean'] == '')]
+                if pending_df.empty: return None, 0
+                
+                # Group theo Userstory
+                grouped = pending_df.groupby('Parent_US')['Userstory/Todo'].apply(list).to_dict()
+                return grouped, len(pending_df)
+
+            temp_res = stats['PIC'].apply(get_grouped_pending)
+            stats['grouped_pending'] = [x[0] for x in temp_res]
+            stats['pending_count'] = [x[1] for x in temp_res]
             stats['percent'] = (stats['done'] / stats['total'] * 100).fillna(0).round(1)
             
             return stats
         return None
     except Exception as e:
-        st.error(f"Lỗi đọc dữ liệu: {e}")
         return None
 
-# --- 5. HÀM GỬI TIN NHẮN ---
+# --- 4. GỬI BÁO CÁO (Chỉ gửi số lượng tổng) ---
 def send_report_logic(project_name, config, pic_stats):
     s_no, s_start, s_end = get_current_sprint_info(config)
     time_str = datetime.now(VN_TZ).strftime('%H:%M')
@@ -131,10 +131,12 @@ def send_report_logic(project_name, config, pic_stats):
         msg += f"┣ Tiến độ: **{r['percent']}%**\n"
         msg += f"┣ ✅ Xong: {int(r['done'])} | 🚧 Đang: {int(r['doing'])}\n"
         msg += f"┣ ⌚ Giờ: {round(float(r['real_total']), 1)}h / {round(float(r['est_total']), 1)}h\n"
+        
+        # Chỉ hiển thị số lượng, không liệt kê tên task
         if r['pending_count'] > 0:
-            msg += f"┗ ⏳ **Trống State:** _{r['pending_list']}_\n"
+            msg += f"┗ ⏳ **Chưa làm: {int(r['pending_count'])} task**\n"
         else:
-            msg += f"┗ ✅ Đã điền State đủ!\n"
+            msg += f"┗ ✅ Đã cập nhật đủ trạng thái!\n"
         msg += "──────────────────────────────\n"
 
     try:
@@ -143,55 +145,58 @@ def send_report_logic(project_name, config, pic_stats):
         else:
             url_tg = f"https://api.telegram.org/bot{config['bot_token']}/sendMessage"
             payload = {"chat_id": config['chat_id'], "text": msg, "parse_mode": "Markdown"}
-            if "topic_id" in config and config['topic_id'] != 0: 
-                payload["message_thread_id"] = config['topic_id']
+            if config.get('topic_id'): payload["message_thread_id"] = config['topic_id']
             requests.post(url_tg, json=payload, timeout=10)
-    except Exception as e:
-        st.error(f"Lỗi gửi tin nhắn: {e}")
+    except: pass
 
-# --- 6. GIAO DIỆN & LOGIC CHẠY ---
+# --- 5. GIAO DIỆN APP (Group task theo US) ---
+st.set_page_config(page_title="Sprint Dashboard", layout="wide")
+
 if "--action" in sys.argv:
     for name in PROJECTS.keys():
-        stats = get_data_and_process.__wrapped__(name)
-        if isinstance(stats, pd.DataFrame):
-            send_report_logic(name, PROJECTS[name], stats)
+        data = get_data_and_process.__wrapped__(name)
+        if isinstance(data, pd.DataFrame): send_report_logic(name, PROJECTS[name], data)
     sys.exit(0)
 
-st.set_page_config(page_title="Sprint Dashboard", layout="wide")
 if 'selected_project' not in st.session_state:
     st.session_state.selected_project = list(PROJECTS.keys())[0]
 
+# Sidebar chọn dự án
 st.sidebar.title("📁 Quản lý dự án")
-for name, p_cfg in PROJECTS.items():
-    s_no_side, _, _ = get_current_sprint_info(p_cfg)
+for name in PROJECTS.keys():
     btn_type = "primary" if st.session_state.selected_project == name else "secondary"
-    if st.sidebar.button(f"{name}\nSprint {int(s_no_side)}", use_container_width=True, key=f"btn_{name}", type=btn_type):
+    if st.sidebar.button(name, use_container_width=True, key=f"side_{name}", type=btn_type):
         st.session_state.selected_project = name
         st.rerun()
 
+# Nội dung chính
 config = PROJECTS[st.session_state.selected_project]
 pic_stats = get_data_and_process(st.session_state.selected_project)
-s_no, s_start, s_end = get_current_sprint_info(config)
 
-st.title(f"🚀 {st.session_state.selected_project}")
-st.subheader(f"🚩 Sprint {int(s_no)} ({s_start.strftime('%d/%m')} - {s_end.strftime('%d/%m')})")
-
-if st.sidebar.button(f"📤 Bắn báo cáo {config['platform']}"):
-    if isinstance(pic_stats, pd.DataFrame):
+if pic_stats is not None:
+    s_no, s_start, s_end = get_current_sprint_info(config)
+    st.title(f"🚀 {st.session_state.selected_project}")
+    st.subheader(f"🚩 Sprint {int(s_no)} ({s_start.strftime('%d/%m')} - {s_end.strftime('%d/%m')})")
+    
+    if st.sidebar.button("📤 Gửi báo cáo ngay"):
         send_report_logic(st.session_state.selected_project, config, pic_stats)
-        st.sidebar.success("Đã gửi báo cáo!")
+        st.sidebar.success("Đã gửi!")
 
-if isinstance(pic_stats, pd.DataFrame):
     cols = st.columns(5)
     for i, row in pic_stats.iterrows():
         with cols[i % 5]:
-            user_icon = PIC_ICONS.get(row['PIC'], DEFAULT_ICON)
-            st.metric(f"{user_icon} {row['PIC']}", f"{row['percent']}%")
+            icon = PIC_ICONS.get(row['PIC'], DEFAULT_ICON)
+            st.metric(f"{icon} {row['PIC']}", f"{row['percent']}%")
             st.progress(min(row['percent']/100, 1.0))
-            st.write(f"⏱️ **{round(float(row['real_total']), 1)}h** / {round(float(row['est_total']), 1)}h")
-            st.write(f"✅ {int(row['done'])} | 🚧 {int(row['doing'])} | ⏳ Tồn: {int(row['pending_count'])}")
-            if row['pending_count'] > 0:
-                with st.expander("Xem task trống State"):
-                    st.caption(row['pending_list'])
+            st.write(f"✅ {int(row['done'])} | ⏳ Tồn: **{int(row['pending_count'])}**")
+            
+            # Hiển thị Group theo Userstory trên App
+            if row['pending_count'] > 0 and row['grouped_pending']:
+                with st.expander("Chi tiết task tồn"):
+                    for us_name, tasks in row['grouped_pending'].items():
+                        st.markdown(f"**📌 {us_name}**")
+                        for t in tasks:
+                            st.caption(f"• {t}")
             st.divider()
+            
     st.plotly_chart(px.bar(pic_stats, x='PIC', y=['est_total', 'real_total'], barmode='group'), use_container_width=True)
