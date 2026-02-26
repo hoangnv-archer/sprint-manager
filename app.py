@@ -25,16 +25,16 @@ PROJECTS = {
         "bot_token": "8535993887:AAFDNSLk9KRny99kQrAoQRbgpKJx_uHbkpw",
         "chat_id": "-1002102856307",
         "topic_id": 18251,
-        "sprint_start_date": "2026-02-09", 
-        "base_sprint_no": 31                
+        "sprint_start_date": "2026-03-02", 
+        "base_sprint_no": 33                
     },
     "Sprint Team Debuffer": {
         "url": "https://docs.google.com/spreadsheets/d/1llUlTDfR413oZelu-AoMsC0lEzHqXOkB4SCwc_4zmAo/edit?pli=1&gid=982443592#gid=982443592",
         "pics": ['Tài', 'Dương', 'QA', 'Quân', 'Phú', 'Thịnh', 'Đô', 'Tùng', 'Anim', 'Thắng VFX'],
         "platform": "Discord",
         "webhook_url": "https://discord.com/api/webhooks/1469191941261492386/gZ1sx5hnTojIKw5kp5quEotwIldRmCIlhXkZBu9M1Ejs-ZgEUtGsYHlS2CwIWguNbrzc",
-        "sprint_start_date": "2026-02-16", 
-        "base_sprint_no": 6
+        "sprint_start_date": "2026-02-23", 
+        "base_sprint_no": 7
     },
     "Sprint Team Skybow": {
         "url": "https://docs.google.com/spreadsheets/d/157YuS6Sq_Sr6GGl-Ze0Jb0vaIbXZMvlZmU1Yqni-6g4/edit?pli=1&gid=982443592#gid=982443592",
