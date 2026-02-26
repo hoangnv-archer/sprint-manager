@@ -10,9 +10,8 @@ import sys
 VN_TZ = timezone(timedelta(hours=7))
 
 # --- 2. ĐỊNH NGHĨA ICON CHO TỪNG NGƯỜI (PIC) ---
-# Bạn có thể thêm tên và icon tùy thích ở đây
 PIC_ICONS = {
-     "Chuân": "🔧",
+    "Chuân": "🔧",
     "Việt": "💊",
     "Thắng": "✏️",
     "QA": "🔍",
@@ -47,7 +46,7 @@ def get_current_sprint_info(config):
     current_sprint_end = current_sprint_start + timedelta(days=11)
     return current_sprint_no, current_sprint_start, current_sprint_end
 
-# --- 3. CẤU HÌNH DỰ ÁN ---
+# --- 3. CẤU HÌNH CÁC DỰ ÁN ---
 PROJECTS = {
     "Sprint Team Infinity": {
         "url": "https://docs.google.com/spreadsheets/d/1hentY_r7GNVwJWM3wLT7LsA3PrXQidWnYahkfSwR9Kw/edit?pli=1&gid=982443592#gid=982443592",
@@ -66,8 +65,8 @@ PROJECTS = {
         "webhook_url": "YOUR_DISCORD_WEBHOOK_URL",
         "sprint_start_date": "2026-02-16", 
         "base_sprint_no": 6
-    }
-     "Sprint Team Skybow": {
+    },
+    "Sprint Team Skybow": {
         "url": "https://docs.google.com/spreadsheets/d/157YuS6Sq_Sr6GGl-Ze0Jb0vaIbXZMvlZmU1Yqni-6g4/edit?pli=1&gid=982443592#gid=982443592",
         "pics": ['Đạt', 'Bình', 'QA', 'Lâm', 'Hồng'],
         "platform": "Telegram", # Hoặc Discord
@@ -79,7 +78,7 @@ PROJECTS = {
     }
 }
 
-# --- 4. HÀM XỬ LÝ DATA ---
+# --- 4. HÀM XỬ LÝ DATA (Có Cache) ---
 @st.cache_data(ttl=300)
 def get_data_and_process(config_name):
     config = PROJECTS[config_name]
@@ -127,27 +126,26 @@ def send_report_logic(project_name, config, pic_stats):
     if config['platform'] == "Discord":
         msg = f"**{project_name.upper()} - SPRINT {int(s_no)}**\n({s_start.strftime('%d/%m')} - {s_end.strftime('%d/%m')})\n──────────────────────────────\n"
         for _, r in pic_stats.iterrows():
-            # Lấy icon riêng
             icon = PIC_ICONS.get(r['PIC'], DEFAULT_ICON)
             msg += f"{icon} **{r['PIC']}**: `{r['percent']}%` hoàn thành\n✅ Xong: {int(r['done'])} | 🚧 Đang: {int(r['doing'])}\n⏱️ Giờ: `{round(float(r['real_total']), 1)}h` / `{round(float(r['est_total']), 1)}h` (Real/Est)\n──────────────────────────────\n"
         requests.post(config['webhook_url'], json={"content": msg})
     else:
         msg = f"🤖 **AUTO REPORT ({time_str})**\n🚩 **SPRINT {int(s_no)}** ({s_start.strftime('%d/%m')} - {s_end.strftime('%d/%m')})\n──────────────────────────────\n"
         for _, r in pic_stats.iterrows():
-            # Lấy icon riêng
             icon = PIC_ICONS.get(r['PIC'], DEFAULT_ICON)
             msg += f"{icon} **{r['PIC']}**\n┣ Tiến độ: **{r['percent']}%**\n┣ ✅ Xong: {int(r['done'])} | 🚧 Đang: {int(r['doing'])}\n┗ ⌚ Giờ: {round(float(r['real_total']), 1)}h / {round(float(r['est_total']), 1)}h\n──────────────────────────────\n"
         
         url_tg = f"https://api.telegram.org/bot{config['bot_token']}/sendMessage"
         payload = {"chat_id": config['chat_id'], "text": msg, "parse_mode": "Markdown"}
-        if "topic_id" in config: payload["message_thread_id"] = config['topic_id']
+        if "topic_id" in config and config['topic_id'] != 0: 
+            payload["message_thread_id"] = config['topic_id']
         requests.post(url_tg, json=payload)
 
-# --- 6. LOGIC CHẠY ---
+# --- 6. LOGIC CHẠY (GITHUB ACTIONS VS WEB) ---
 if "--action" in sys.argv:
     for name in PROJECTS.keys():
         stats = get_data_and_process.__wrapped__(name)
-        if stats is not None:
+        if isinstance(stats, pd.DataFrame):
             send_report_logic(name, PROJECTS[name], stats)
     sys.exit(0)
 
@@ -171,15 +169,14 @@ st.title(f"🚀 {st.session_state.selected_project}")
 st.subheader(f"🚩 Sprint {int(s_no)} ({s_start.strftime('%d/%m')} - {s_end.strftime('%d/%m')})")
 
 if st.sidebar.button(f"📤 Bắn báo cáo {config['platform']}"):
-    if pic_stats is not None:
+    if isinstance(pic_stats, pd.DataFrame):
         send_report_logic(st.session_state.selected_project, config, pic_stats)
         st.sidebar.success("Đã gửi báo cáo!")
 
-if pic_stats is not None:
+if isinstance(pic_stats, pd.DataFrame):
     cols = st.columns(5)
     for i, row in pic_stats.iterrows():
         with cols[i % 5]:
-            # Hiển thị icon trên web
             user_icon = PIC_ICONS.get(row['PIC'], DEFAULT_ICON)
             st.metric(f"{user_icon} {row['PIC']}", f"{row['percent']}%")
             st.progress(min(row['percent']/100, 1.0))
