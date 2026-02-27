@@ -58,7 +58,7 @@ def get_current_sprint_info(config):
     current_sprint_end = current_sprint_start + timedelta(days=11)
     return current_sprint_no, current_sprint_start, current_sprint_end
 
-# --- XỬ LÝ DỮ LIỆU ---
+# --- 2. XỬ LÝ DỮ LIỆU ---
 @st.cache_data(ttl=60)
 def get_data_and_process(config_name):
     config = PROJECTS[config_name]
@@ -78,7 +78,6 @@ def get_data_and_process(config_name):
             df = df[1:].reset_index(drop=True)
             df.columns = [str(c).strip() for c in df.columns]
 
-            # Xử lý gán Userstory cho từng dòng Task
             current_us = "General"
             processed_data = []
             
@@ -89,24 +88,22 @@ def get_data_and_process(config_name):
                 
                 if not title: continue
                 
-                # Logic: Nếu không có PIC và không có State -> Đây là dòng Userstory
-                if (not pic or pic == 'nan') and (not state or state == 'nan'):
+                if (not pic or pic == 'nan' or pic == '') and (not state or state == 'nan' or state == ''):
                     current_us = title
                 else:
-                    # Đây là một Task
                     row_data = row.to_dict()
                     row_data['Assigned_US'] = current_us
                     processed_data.append(row_data)
             
+            if not processed_data: return None
+
             df_final = pd.DataFrame(processed_data)
             df_final['PIC_Clean'] = df_final['PIC'].fillna('').astype(str).str.strip()
             df_final['State_Clean'] = df_final['State'].fillna('').astype(str).str.strip().str.lower()
             
-            # Chỉ lấy dữ liệu của team
             df_team = df_final[df_final['PIC_Clean'].isin(config['pics'])].copy()
             done_states = ['done', 'cancel', 'dev done']
             
-            # Thống kê
             stats = df_team.groupby('PIC_Clean').agg(
                 total=('Userstory/Todo', 'count'),
                 done=('State_Clean', lambda x: x.isin(done_states).sum()),
@@ -116,7 +113,6 @@ def get_data_and_process(config_name):
             ).reset_index()
             stats.rename(columns={'PIC_Clean': 'PIC'}, inplace=True)
 
-            # Gom nhóm task trống state theo US (Chỉ dùng cho App)
             def get_grouped_pending(pic):
                 pending = df_team[(df_team['PIC_Clean'] == pic) & (df_team['State_Clean'] == '')]
                 if pending.empty: return {}, 0
@@ -131,10 +127,10 @@ def get_data_and_process(config_name):
             return stats
         return None
     except Exception as e:
-        st.error(f"Lỗi: {e}")
+        if "--action" not in sys.argv: st.error(f"Lỗi: {e}")
         return None
 
-# --- GỬI BÁO CÁO (Chỉ hiện tổng số) ---
+# --- 3. GỬI BÁO CÁO ---
 def send_report_logic(project_name, config, pic_stats):
     s_no, s_start, s_end = get_current_sprint_info(config)
     time_str = datetime.now(VN_TZ).strftime('%H:%M')
@@ -143,7 +139,6 @@ def send_report_logic(project_name, config, pic_stats):
         icon = PIC_ICONS.get(r['PIC'], DEFAULT_ICON)
         msg += f"{icon} **{r['PIC']}**\n┣ Tiến độ: **{r['percent']}%**\n┣ ✅ Xong: {int(r['done'])} | 🚧 Đang: {int(r['doing'])}\n"
         
-        # Ở ĐÂY: Chỉ ghi tổng số, không liệt kê task
         if r['pending_count'] > 0:
             msg += f"┗ ⏳ **Trống State: {int(r['pending_count'])} task**\n"
         else:
@@ -156,9 +151,27 @@ def send_report_logic(project_name, config, pic_stats):
             requests.post(url, json={"chat_id": config['chat_id'], "text": msg, "parse_mode": "Markdown", "message_thread_id": config.get('topic_id')}, timeout=10)
         elif config['platform'] == "Discord":
             requests.post(config['webhook_url'], json={"content": msg}, timeout=10)
-    except: pass
+    except Exception as e:
+        print(f"Lỗi gửi tin nhắn {project_name}: {e}")
 
-# --- GIAO DIỆN WEB ---
+# --- 4. LOGIC CHẠY TỰ ĐỘNG (DÀNH CHO GITHUB ACTIONS) ---
+if "--action" in sys.argv:
+    # Lấy tên team từ tham số thứ 3 (nếu có), ví dụ: python app.py --action skybow
+    target = sys.argv[2].lower() if len(sys.argv) > 2 else "all"
+    print(f"🚀 Bắt đầu gửi báo cáo tự động (Target: {target})...")
+    
+    for name, cfg in PROJECTS.items():
+        if target == "all" or target in name.lower():
+            # Sử dụng __wrapped__ để gọi hàm gốc không qua cache của streamlit
+            stats = get_data_and_process.__wrapped__(name)
+            if stats is not None and not stats.empty:
+                send_report_logic(name, cfg, stats)
+                print(f"✅ Đã gửi báo cáo cho: {name}")
+            else:
+                print(f"⚠️ Không thể xử lý dữ liệu cho: {name}")
+    sys.exit(0)
+
+# --- 5. GIAO DIỆN WEB (STREAMLIT) ---
 st.set_page_config(page_title="Sprint Dashboard", layout="wide")
 
 if 'selected_project' not in st.session_state:
@@ -192,9 +205,9 @@ if pic_stats is not None:
             st.progress(min(row['percent']/100, 1.0))
             st.write(f"✅ {int(row['done'])} | ⏳ Tồn: **{int(row['pending_count'])}**")
             
-            # TRÊN APP: Hiển thị group theo Userstory
             if row['pending_count'] > 0:
                 with st.expander("Chi tiết task tồn"):
+                    # Lưu ý: Sửa pending_grouped cho khớp với logic bên trên
                     for us, tasks in row['pending_grouped'].items():
                         st.markdown(f"**📌 {us}**")
                         for t in tasks:
