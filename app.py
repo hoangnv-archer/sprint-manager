@@ -118,23 +118,20 @@ def get_data_and_process(config_name):
             ).reset_index()
             stats.rename(columns={'PIC_Clean': 'PIC'}, inplace=True)
 
-            # --- PHÂN TÍCH CHỈ SỐ HIỆU SUẤT & DỰ BÁO ---
+            # --- PHÂN TÍCH HIỆU SUẤT & DỰ BÁO ---
             stats['burn_rate'] = (stats['real_total'] / stats['est_total']).replace([float('inf'), -float('inf')], 0).fillna(0).round(2)
             
             now_dt = datetime.now(VN_TZ)
-            s_no, s_start, s_end = get_current_sprint_info(config)
+            s_no, s_start, _ = get_current_sprint_info(config)
             days_passed = max(1, (now_dt.date() - s_start).days)
             stats['velocity'] = (stats['real_total'] / days_passed).round(1)
 
-            # Logic Dự báo ngày hoàn thành
             def predict_finish(row):
                 remaining_h = max(0, row['est_total'] - row['real_total'])
                 if row['velocity'] > 0:
                     days_needed = remaining_h / row['velocity']
-                    finish_date = now_dt.date() + timedelta(days=int(days_needed))
-                    return finish_date.strftime('%d/%m')
+                    return (now_dt.date() + timedelta(days=int(days_needed))).strftime('%d/%m')
                 return "N/A"
-            
             stats['eta'] = stats.apply(predict_finish, axis=1)
 
             def evaluate_perf(rate):
@@ -159,7 +156,7 @@ def get_data_and_process(config_name):
             stats['percent'] = (stats['done_count'] / stats['total'] * 100).fillna(0).round(1)
             return stats
     except Exception as e:
-        if "--action" in sys.argv: print(f"❌ Lỗi xử lý {config_name}: {e}")
+        if "--action" in sys.argv: print(f"❌ Lỗi: {e}")
         else: st.error(f"Lỗi hệ thống: {e}")
     return None
 
@@ -170,8 +167,10 @@ def send_report_logic(project_name, config, pic_stats):
     msg = f"🤖 **AUTO REPORT ({time_str})**\n🚩 **{project_name.upper()} - SPRINT {int(s_no)}**\n──────────────────────────────\n"
     for _, r in pic_stats.iterrows():
         icon = PIC_ICONS.get(r['PIC'], DEFAULT_ICON)
-        eta_str = f"🏁 Xong dự kiến: {r['eta']}" if r['eta'] != "N/A" else "🏁 Chưa có dự báo"
-        msg += f"{icon} **{r['PIC']}** ({r['perf_status']})\n┣ Tiến độ: **{r['percent']}%**\n┣ {eta_str}\n┣ ✅ Xong: {int(r['done_count'])} | 🚧 Đang: {int(r['doing_count'])}\n┣ ⌚ V: {r['velocity']}h/d | 🔥 Rate: {r['burn_rate']}x\n"
+        eta_str = f"🏁 Xong dự kiến: {r['eta']}" if r['eta'] != "N/A" else "🏁 Chưa đủ dữ liệu dự báo"
+        msg += f"{icon} **{r['PIC']}** ({r['perf_status']})\n┣ {eta_str}\n┣ Tiến độ: **{r['percent']}%**\n┣ ✅ Xong: {int(r['done_count'])} | 🚧 Đang: {int(r['doing_count'])}\n┣ ⌚ V: {r['velocity']}h/d | 🔥 Rate: {r['burn_rate']}x\n"
+        if r['pending_count'] > 0: msg += f"┗ ⚠️ **Trống State: {int(r['pending_count'])} task**\n"
+        else: msg += f"┗ ✅ Đã cập nhật đủ!\n"
         msg += "──────────────────────────────\n"
 
     try:
@@ -182,22 +181,19 @@ def send_report_logic(project_name, config, pic_stats):
             requests.post(config['webhook_url'], json={"content": msg}, timeout=10)
     except Exception as e: print(f"Lỗi gửi tin nhắn: {e}")
 
-# --- 4. KHỞI CHẠY ---
+# --- 4. GIAO DIỆN WEB ---
 if "--action" in sys.argv:
     target = sys.argv[2].lower() if len(sys.argv) > 2 else "all"
     for name, cfg in PROJECTS.items():
         if target == "all" or target in name.lower():
             stats = get_data_and_process(name)
-            if stats is not None:
-                send_report_logic(name, cfg, stats)
-                print(f"✅ Đã gửi báo cáo cho {name}")
+            if stats is not None: send_report_logic(name, cfg, stats)
     sys.exit(0)
 
 else:
     st.set_page_config(page_title="Sprint Dashboard", page_icon="🚀", layout="wide", initial_sidebar_state="collapsed")
     st.sidebar.title("📁 Dự án")
-    if 'selected_project' not in st.session_state:
-        st.session_state.selected_project = list(PROJECTS.keys())[0]
+    if 'selected_project' not in st.session_state: st.session_state.selected_project = list(PROJECTS.keys())[0]
 
     for name in PROJECTS.keys():
         if st.sidebar.button(name, use_container_width=True, type="primary" if st.session_state.selected_project == name else "secondary"):
@@ -209,18 +205,18 @@ else:
 
     if pic_stats is not None:
         s_no, s_start, s_end = get_current_sprint_info(config)
-        if st.sidebar.button("📤 Gửi báo cáo ngay"):
-            send_report_logic(st.session_state.selected_project, config, pic_stats)
-            st.sidebar.success("Đã gửi báo cáo thành công!")
-
         st.title(f"🚀 {st.session_state.selected_project}")
         st.caption(f"📅 Sprint {int(s_no)}: {s_start.strftime('%d/%m')} - {s_end.strftime('%d/%m')}")
+        
+        if st.sidebar.button("📤 Gửi báo cáo ngay"):
+            send_report_logic(st.session_state.selected_project, config, pic_stats)
+            st.sidebar.success("Đã gửi thành công!")
 
         st.divider()
         t_cols = st.columns(4)
-        t_cols[0].metric("✅ Tổng Xong", f"{int(pic_stats['done_count'].sum())} task")
-        t_cols[1].metric("🚧 Tổng Đang làm", f"{int(pic_stats['doing_count'].sum())} task")
-        t_cols[2].metric("⏳ Tổng Tồn", f"{int(pic_stats['pending_count'].sum())} task")
+        t_cols[0].metric("✅ Tổng Xong", f"{int(pic_stats['done_count'].sum())}")
+        t_cols[1].metric("🚧 Tổng Đang làm", f"{int(pic_stats['doing_count'].sum())}")
+        t_cols[2].metric("⏳ Tổng Tồn", f"{int(pic_stats['pending_count'].sum())}")
         t_cols[3].metric("⌚ Tổng Real", f"{round(pic_stats['real_total'].sum(), 1)}h")
         st.divider()
 
@@ -235,7 +231,6 @@ else:
                         st.markdown(f"#### {icon} {row['PIC']}")
                         st.progress(min(row['percent']/100, 1.0))
                         
-                        # Chỉ số Performance & ETA
                         p1, p2, p3 = st.columns(3)
                         p1.metric("Hiệu suất", f"{row['burn_rate']}x", row['perf_status'], delta_color="off")
                         p2.metric("Tốc độ", f"{row['velocity']}h/d")
@@ -244,27 +239,29 @@ else:
                         c1, c2, c3 = st.columns(3)
                         c1.caption(f"✅ {int(row['done_count'])}")
                         c2.caption(f"🚧 {int(row['doing_count'])}")
-                        c3.caption(f"⏳ {int(row['pending_count'])}")
+                        c3.caption(f"⏳ {int(row['pending_count'])}") # Đã khôi phục hiển thị Pending
                         
-                        with st.expander("Chi tiết"):
-                            st.write(f"**Trạng thái:** {row['perf_status']}")
-                            st.write(f"**Dự báo hoàn thành:** Ngày {row['eta']}")
+                        with st.expander("Chi tiết Task"):
                             d = row['details']
+                            # Hiển thị các task chưa có State
+                            if d['pending']:
+                                st.error("⏳ **Chưa có State (Cần cập nhật):**")
+                                for us, t_list in d['pending'].items():
+                                    st.markdown(f"📌 *{us}*")
+                                    for t in t_list: st.caption(f"  + {t}")
+                            
                             if d['doing']:
-                                st.write("🚧 **Đang làm:**")
+                                st.info("🚧 **Đang làm:**")
                                 for us, t_list in d['doing'].items():
+                                    st.markdown(f"📌 *{us}*")
                                     for t in t_list: st.caption(f"  + {t}")
                     st.divider()
 
-        st.write("### 📊 Phân tích năng lực & Tương quan")
+        # Biểu đồ Performance Scatter
+        st.write("### 📊 Phân tích năng lực PIC")
         fig_perf = px.scatter(
-            pic_stats, x="total", y="velocity", 
-            size="real_total", color="perf_status",
+            pic_stats, x="total", y="velocity", size="real_total", color="perf_status",
             hover_name="PIC", labels={"total": "Số lượng Task", "velocity": "Tốc độ (Giờ/Ngày)"},
             color_discrete_map={"🟢 Ổn định": "#2ecc71", "🔴 Chậm": "#e74c3c", "⚡ Nhanh": "#3498db", "⚪ Trống": "#95a5a6"}
         )
         st.plotly_chart(fig_perf, use_container_width=True)
-        
-        st.plotly_chart(px.bar(pic_stats, x='PIC', y=['est_total', 'real_total'], barmode='group', title="So khớp Giờ Dự kiến vs Thực tế"), use_container_width=True)
-    else:
-        st.info("Không có dữ liệu hiển thị.")
