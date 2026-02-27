@@ -26,7 +26,7 @@ PROJECTS = {
         "chat_id": "-1002102856307",
         "topic_id": 18251,
         "sprint_start_date": "2026-03-02", 
-        "base_sprint_no": 33 
+        "base_sprint_no": 33,
         "sprint_duration": 11
     },
     "Sprint Team Debuffer": {
@@ -35,7 +35,7 @@ PROJECTS = {
         "platform": "Discord",
         "webhook_url": "https://discord.com/api/webhooks/1469191941261492386/gZ1sx5hnTojIKw5kp5quEotwIldRmCIlhXkZBu9M1Ejs-ZgEUtGsYHlS2CwIWguNbrzc",
         "sprint_start_date": "2026-02-23", 
-        "base_sprint_no": 7
+        "base_sprint_no": 7,
         "sprint_duration": 11
     },
     "Sprint Team Skybow": {
@@ -46,7 +46,7 @@ PROJECTS = {
         "chat_id": "-1003176404805",
         "topic_id": 2447,
         "sprint_start_date": "2026-02-24",
-        "base_sprint_no": 13
+        "base_sprint_no": 13,
         "sprint_duration": 14
     }
 }
