@@ -200,26 +200,26 @@ if pic_stats is not None:
                     st.caption(f"⌚ {round(row['real_total'],1)}h / {round(row['est_total'],1)}h ({row['percent']}%)")
                     
                     with st.expander("Chi tiết Task"):
-                d = row['details']
-                if d['doing']:
-                    st.write("🚧 **Đang làm:**")
-                    for us, tasks in d['doing'].items():
-                        st.markdown(f"- *{us}*")
-                        for t in tasks: st.caption(f"  + {t}")
-                
-                if d['pending']:
-                    st.write("⏳ **Chưa có State:**")
-                    for us, tasks in d['pending'].items():
-                        st.markdown(f"- *{us}*")
-                        for t in tasks: st.caption(f"  + {t}")
-
-                if d['done']:
-                    st.write("✅ **Đã xong:**")
-                    for us, tasks in d['done'].items():
-                        st.markdown(f"- *{us}*")
-                        for t in tasks: st.caption(f"  + {t}")
-            st.divider()
-                st.write("") # Khoảng cách giữa các hàng
+                        d = row['details']
+                        if d['doing']:
+                            st.write("🚧 **Đang làm:**")
+                            for us, tasks in d['doing'].items():
+                                st.markdown(f"- *{us}*")
+                                for t in tasks: st.caption(f"  + {t}")
+                            
+                        if d['pending']:
+                            st.write("⏳ **Chưa có State:**")
+                            for us, tasks in d['pending'].items():
+                                st.markdown(f"- *{us}*")
+                                for t in tasks: st.caption(f"  + {t}")
+            
+                        if d['done']:
+                            st.write("✅ **Đã xong:**")
+                            for us, tasks in d['done'].items():
+                                st.markdown(f"- *{us}*")
+                                for t in tasks: st.caption(f"  + {t}")
+                    st.divider()
+                    st.write("") # Khoảng cách giữa các hàng
 
     st.plotly_chart(px.bar(pic_stats, x='PIC', y=['est_total', 'real_total'], barmode='group', title="Biểu đồ giờ dự án"), use_container_width=True)
 
