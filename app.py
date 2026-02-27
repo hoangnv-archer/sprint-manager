@@ -118,12 +118,24 @@ def get_data_and_process(config_name):
             ).reset_index()
             stats.rename(columns={'PIC_Clean': 'PIC'}, inplace=True)
 
-            # --- PHÂN TÍCH CHỈ SỐ HIỆU SUẤT ---
+            # --- PHÂN TÍCH CHỈ SỐ HIỆU SUẤT & DỰ BÁO ---
             stats['burn_rate'] = (stats['real_total'] / stats['est_total']).replace([float('inf'), -float('inf')], 0).fillna(0).round(2)
             
+            now_dt = datetime.now(VN_TZ)
             s_no, s_start, s_end = get_current_sprint_info(config)
-            days_passed = max(1, (datetime.now(VN_TZ).date() - s_start).days)
+            days_passed = max(1, (now_dt.date() - s_start).days)
             stats['velocity'] = (stats['real_total'] / days_passed).round(1)
+
+            # Logic Dự báo ngày hoàn thành
+            def predict_finish(row):
+                remaining_h = max(0, row['est_total'] - row['real_total'])
+                if row['velocity'] > 0:
+                    days_needed = remaining_h / row['velocity']
+                    finish_date = now_dt.date() + timedelta(days=int(days_needed))
+                    return finish_date.strftime('%d/%m')
+                return "N/A"
+            
+            stats['eta'] = stats.apply(predict_finish, axis=1)
 
             def evaluate_perf(rate):
                 if rate == 0: return "⚪ Trống"
@@ -158,9 +170,8 @@ def send_report_logic(project_name, config, pic_stats):
     msg = f"🤖 **AUTO REPORT ({time_str})**\n🚩 **{project_name.upper()} - SPRINT {int(s_no)}**\n──────────────────────────────\n"
     for _, r in pic_stats.iterrows():
         icon = PIC_ICONS.get(r['PIC'], DEFAULT_ICON)
-        msg += f"{icon} **{r['PIC']}** ({r['perf_status']})\n┣ Tiến độ: **{r['percent']}%**\n┣ ✅ Xong: {int(r['done_count'])} | 🚧 Đang: {int(r['doing_count'])}\n┣ ⌚ V: {r['velocity']}h/d | 🔥 Rate: {r['burn_rate']}x\n"
-        if r['pending_count'] > 0: msg += f"┗ ⏳ **Trống State: {int(r['pending_count'])} task**\n"
-        else: msg += f"┗ ✅ Đã cập nhật đủ!\n"
+        eta_str = f"🏁 Xong dự kiến: {r['eta']}" if r['eta'] != "N/A" else "🏁 Chưa có dự báo"
+        msg += f"{icon} **{r['PIC']}** ({r['perf_status']})\n┣ Tiến độ: **{r['percent']}%**\n┣ {eta_str}\n┣ ✅ Xong: {int(r['done_count'])} | 🚧 Đang: {int(r['doing_count'])}\n┣ ⌚ V: {r['velocity']}h/d | 🔥 Rate: {r['burn_rate']}x\n"
         msg += "──────────────────────────────\n"
 
     try:
@@ -213,7 +224,6 @@ else:
         t_cols[3].metric("⌚ Tổng Real", f"{round(pic_stats['real_total'].sum(), 1)}h")
         st.divider()
 
-        # PIC Cards với Hiệu suất
         for i in range(0, len(pic_stats), 2):
             cols = st.columns(2)
             for j in range(2):
@@ -225,30 +235,27 @@ else:
                         st.markdown(f"#### {icon} {row['PIC']}")
                         st.progress(min(row['percent']/100, 1.0))
                         
-                        # Chỉ số Performance
-                        p1, p2 = st.columns(2)
+                        # Chỉ số Performance & ETA
+                        p1, p2, p3 = st.columns(3)
                         p1.metric("Hiệu suất", f"{row['burn_rate']}x", row['perf_status'], delta_color="off")
                         p2.metric("Tốc độ", f"{row['velocity']}h/d")
+                        p3.metric("Dự kiến Xong", row['eta'])
 
                         c1, c2, c3 = st.columns(3)
                         c1.caption(f"✅ {int(row['done_count'])}")
                         c2.caption(f"🚧 {int(row['doing_count'])}")
                         c3.caption(f"⏳ {int(row['pending_count'])}")
                         
-                        with st.expander("Phân tích & Task"):
+                        with st.expander("Chi tiết"):
                             st.write(f"**Trạng thái:** {row['perf_status']}")
+                            st.write(f"**Dự báo hoàn thành:** Ngày {row['eta']}")
                             d = row['details']
                             if d['doing']:
                                 st.write("🚧 **Đang làm:**")
                                 for us, t_list in d['doing'].items():
                                     for t in t_list: st.caption(f"  + {t}")
-                            if d['pending']:
-                                st.write("⏳ **Trống State:**")
-                                for us, t_list in d['pending'].items():
-                                    for t in t_list: st.caption(f"  + {t}")
                     st.divider()
 
-        # Biểu đồ Performance Scatter
         st.write("### 📊 Phân tích năng lực & Tương quan")
         fig_perf = px.scatter(
             pic_stats, x="total", y="velocity", 
