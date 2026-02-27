@@ -140,7 +140,23 @@ def get_data_and_process(config_name):
             return stats
         return None
     except Exception as e:
-        if "--action" not in sys.argv: st.error(f"Lỗi: {e}")
+        # Nếu chạy qua workflow (--action), in lỗi ra console thay vì dùng st.error
+        if "--action" not in sys.argv:
+    # Chỉ chạy những lệnh này nếu đang xem trên trình duyệt
+            st.set_page_config(page_title="Sprint Dashboard", layout="wide")
+            if 'selected_project' not in st.session_state:
+                st.session_state.selected_project = list(PROJECTS.keys())[0]
+            # ... (các lệnh st.sidebar, st.title...) ...
+        else:
+            # Nếu chạy qua workflow, thực hiện gửi báo cáo rồi thoát
+            target = sys.argv[2].lower() if len(sys.argv) > 2 else "all"
+            for name, cfg in PROJECTS.items():
+                if target == "all" or target in name.lower():
+                    stats = get_data_and_process(name)
+                    if stats is not None:
+                        send_report_logic(name, cfg, stats)
+                        print(f"Đã gửi báo cáo cho {name}")
+            sys.exit(0)
         return None
 
 # --- 3. GIAO DIỆN STREAMLIT ---
