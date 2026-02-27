@@ -58,7 +58,8 @@ def get_current_sprint_info(config):
     sprint_elapsed = max(0, days_diff // 14)
     current_sprint_no = config['base_sprint_no'] + sprint_elapsed
     current_sprint_start = base_date + timedelta(days=sprint_elapsed * 14)
-    current_sprint_end = current_sprint_start + timedelta(days=11)
+    duration = config.get('sprint_duration', 11)
+    current_sprint_end = current_sprint_start + timedelta(days=duration)
     return current_sprint_no, current_sprint_start, current_sprint_end
 
 # --- 2. XỬ LÝ DỮ LIỆU ---
