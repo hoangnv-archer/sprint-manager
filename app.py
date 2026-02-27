@@ -86,9 +86,10 @@ def get_data_and_process(config_name):
                 pic = str(row.get('PIC', '')).strip()
                 state = str(row.get('State', '')).strip()
                 
-                if not title: continue
+                if not title or title.lower() == 'nan': continue
                 
-                if (not pic or pic == 'nan' or pic == '') and (not state or state == 'nan' or state == ''):
+                # Logic: Nếu PIC trống và State trống -> Đây là dòng tiêu đề Userstory màu xám
+                if (not pic or pic.lower() == 'nan') and (not state or state.lower() == 'nan'):
                     current_us = title
                 else:
                     row_data = row.to_dict()
@@ -96,7 +97,6 @@ def get_data_and_process(config_name):
                     processed_data.append(row_data)
             
             if not processed_data: return None
-
             df_final = pd.DataFrame(processed_data)
             df_final['PIC_Clean'] = df_final['PIC'].fillna('').astype(str).str.strip()
             df_final['State_Clean'] = df_final['State'].fillna('').astype(str).str.strip().str.lower()
@@ -123,11 +123,10 @@ def get_data_and_process(config_name):
             stats['pending_grouped'] = [x[0] for x in res]
             stats['pending_count'] = [x[1] for x in res]
             stats['percent'] = (stats['done'] / stats['total'] * 100).fillna(0).round(1)
-            
             return stats
         return None
     except Exception as e:
-        if "--action" not in sys.argv: st.error(f"Lỗi: {e}")
+        if "--action" not in sys.argv: st.error(f"Lỗi đọc dữ liệu: {e}")
         return None
 
 # --- 3. GỬI BÁO CÁO ---
@@ -138,50 +137,36 @@ def send_report_logic(project_name, config, pic_stats):
     for _, r in pic_stats.iterrows():
         icon = PIC_ICONS.get(r['PIC'], DEFAULT_ICON)
         msg += f"{icon} **{r['PIC']}**\n┣ Tiến độ: **{r['percent']}%**\n┣ ✅ Xong: {int(r['done'])} | 🚧 Đang: {int(r['doing'])}\n"
-        
         if r['pending_count'] > 0:
             msg += f"┗ ⏳ **Trống State: {int(r['pending_count'])} task**\n"
-        else:
-            msg += f"┗ ✅ Đã cập nhật đủ!\n"
+        else: msg += f"┗ ✅ Đã cập nhật đủ!\n"
         msg += "──────────────────────────────\n"
 
     try:
-        if config['platform'] == "Telegram":
+        if config['platform'] == "Telegram" and config.get('bot_token'):
             url = f"https://api.telegram.org/bot{config['bot_token']}/sendMessage"
             requests.post(url, json={"chat_id": config['chat_id'], "text": msg, "parse_mode": "Markdown", "message_thread_id": config.get('topic_id')}, timeout=10)
-        elif config['platform'] == "Discord":
+        elif config['platform'] == "Discord" and "http" in str(config.get('webhook_url')):
             requests.post(config['webhook_url'], json={"content": msg}, timeout=10)
-    except Exception as e:
-        print(f"Lỗi gửi tin nhắn {project_name}: {e}")
+    except: pass
 
-# --- 4. LOGIC CHẠY TỰ ĐỘNG (DÀNH CHO GITHUB ACTIONS) ---
+# --- 4. CHẠY TỰ ĐỘNG ---
 if "--action" in sys.argv:
-    # Lấy tên team từ tham số thứ 3 (nếu có), ví dụ: python app.py --action skybow
     target = sys.argv[2].lower() if len(sys.argv) > 2 else "all"
-    print(f"🚀 Bắt đầu gửi báo cáo tự động (Target: {target})...")
-    
     for name, cfg in PROJECTS.items():
         if target == "all" or target in name.lower():
-            # Sử dụng __wrapped__ để gọi hàm gốc không qua cache của streamlit
             stats = get_data_and_process.__wrapped__(name)
-            if stats is not None and not stats.empty:
-                send_report_logic(name, cfg, stats)
-                print(f"✅ Đã gửi báo cáo cho: {name}")
-            else:
-                print(f"⚠️ Không thể xử lý dữ liệu cho: {name}")
+            if stats is not None: send_report_logic(name, cfg, stats)
     sys.exit(0)
 
-# --- 5. GIAO DIỆN WEB (STREAMLIT) ---
+# --- 5. GIAO DIỆN STREAMLIT ---
 st.set_page_config(page_title="Sprint Dashboard", layout="wide")
-
 if 'selected_project' not in st.session_state:
     st.session_state.selected_project = list(PROJECTS.keys())[0]
 
-# Sidebar
 st.sidebar.title("📁 Quản lý dự án")
 for name in PROJECTS.keys():
-    btn_type = "primary" if st.session_state.selected_project == name else "secondary"
-    if st.sidebar.button(name, use_container_width=True, type=btn_type):
+    if st.sidebar.button(name, use_container_width=True, type="primary" if st.session_state.selected_project == name else "secondary"):
         st.session_state.selected_project = name
         st.rerun()
 
@@ -192,28 +177,21 @@ if pic_stats is not None:
     s_no, s_start, s_end = get_current_sprint_info(config)
     st.title(f"🚀 {st.session_state.selected_project}")
     st.subheader(f"🚩 Sprint {int(s_no)} ({s_start.strftime('%d/%m')} - {s_end.strftime('%d/%m')})")
-    
     if st.sidebar.button("📤 Gửi báo cáo ngay"):
         send_report_logic(st.session_state.selected_project, config, pic_stats)
         st.sidebar.success("Đã gửi báo cáo!")
-
+    
     cols = st.columns(5)
     for i, row in pic_stats.iterrows():
         with cols[i % 5]:
             icon = PIC_ICONS.get(row['PIC'], DEFAULT_ICON)
             st.metric(f"{icon} {row['PIC']}", f"{row['percent']}%")
             st.progress(min(row['percent']/100, 1.0))
-            st.write(f"✅ {int(row['done'])} | ⏳ Tồn: **{int(row['pending_count'])}**")
-            
             if row['pending_count'] > 0:
-                with st.expander("Chi tiết task tồn"):
-                    # Lưu ý: Sửa pending_grouped cho khớp với logic bên trên
+                with st.expander(f"⏳ Tồn: {int(row['pending_count'])}"):
                     for us, tasks in row['pending_grouped'].items():
-                        st.markdown(f"**📌 {us}**")
-                        for t in tasks:
-                            st.caption(f"• {t}")
+                        st.markdown(f"**{us}**")
+                        for t in tasks: st.caption(f"• {t}")
             st.divider()
-    
     st.plotly_chart(px.bar(pic_stats, x='PIC', y=['est_total', 'real_total'], barmode='group'), use_container_width=True)
-else:
-    st.info("Không tìm thấy dữ liệu phù hợp...")
+else: st.info("Đang kiểm tra dữ liệu...")
