@@ -204,19 +204,19 @@ if pic_stats is not None:
                         if d['doing']:
                             st.write("🚧 **Đang làm:**")
                             for us, tasks in d['doing'].items():
-                                st.markdown(f"- *{us}*")
+                                st.markdown(f"📌 *{us}*")
                                 for t in tasks: st.caption(f"  + {t}")
                             
                         if d['pending']:
                             st.write("⏳ **Chưa có State:**")
                             for us, tasks in d['pending'].items():
-                                st.markdown(f"- *{us}*")
+                                st.markdown(f"📌 *{us}*")
                                 for t in tasks: st.caption(f"  + {t}")
             
                         if d['done']:
                             st.write("✅ **Đã xong:**")
                             for us, tasks in d['done'].items():
-                                st.markdown(f"- *{us}*")
+                                st.markdown(f"📌 *{us}*")
                                 for t in tasks: st.caption(f"  + {t}")
                     st.divider()
                     st.write("") # Khoảng cách giữa các hàng
