@@ -47,7 +47,7 @@ PROJECTS = {
         "topic_id": 2447,
         "sprint_start_date": "2026-02-24",
         "base_sprint_no": 13,
-        "sprint_duration": 14
+        "sprint_duration": 16
     }
 }
 
