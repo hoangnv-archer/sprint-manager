@@ -5,7 +5,12 @@ import requests
 from datetime import datetime, timezone, timedelta
 import plotly.express as px
 import sys
-
+st.set_page_config(
+    page_title="Sprint Dashboard",
+    page_icon="🚀",
+    layout="wide",
+    initial_sidebar_state="collapsed", # Tự động thu gọn sidebar để đỡ chiếm chỗ trên mobile
+)
 # --- 1. CẤU HÌNH ---
 VN_TZ = timezone(timedelta(hours=7))
 PIC_ICONS = {
@@ -88,7 +93,6 @@ def get_data_and_process(config_name):
                 
                 if not title or title.lower() == 'nan': continue
                 
-                # Logic: Dòng tiêu đề Userstory (PIC & State trống)
                 if (not pic or pic.lower() == 'nan') and (not state or state.lower() == 'nan'):
                     current_us = title
                 else:
@@ -101,7 +105,6 @@ def get_data_and_process(config_name):
             df_final['PIC_Clean'] = df_final['PIC'].fillna('').astype(str).str.strip()
             df_final['State_Clean'] = df_final['State'].fillna('').astype(str).str.strip().str.lower()
             
-            # Chuyển đổi giờ
             for col in ['Estimate Dev', 'Real']:
                 if col in df_final.columns:
                     df_final[col] = pd.to_numeric(df_final[col].astype(str).str.replace('h',''), errors='coerce').fillna(0)
@@ -109,7 +112,6 @@ def get_data_and_process(config_name):
             df_team = df_final[df_final['PIC_Clean'].isin(config['pics'])].copy()
             done_states = ['done', 'cancel', 'dev done']
             
-            # Thống kê tổng quan
             stats = df_team.groupby('PIC_Clean').agg(
                 total=('Userstory/Todo', 'count'),
                 done_count=('State_Clean', lambda x: x.isin(done_states).sum()),
@@ -119,10 +121,8 @@ def get_data_and_process(config_name):
             ).reset_index()
             stats.rename(columns={'PIC_Clean': 'PIC'}, inplace=True)
 
-            # Hàm lấy chi tiết task cho App
             def get_tasks_detail(pic):
                 p_tasks = df_team[df_team['PIC_Clean'] == pic]
-                
                 done = p_tasks[p_tasks['State_Clean'].isin(done_states)].groupby('Assigned_US')['Userstory/Todo'].apply(list).to_dict()
                 doing = p_tasks[p_tasks['State_Clean'].str.contains('progress')].groupby('Assigned_US')['Userstory/Todo'].apply(list).to_dict()
                 pending = p_tasks[p_tasks['State_Clean'] == ''].groupby('Assigned_US')['Userstory/Todo'].apply(list).to_dict()
@@ -143,45 +143,18 @@ def get_data_and_process(config_name):
         if "--action" not in sys.argv: st.error(f"Lỗi: {e}")
         return None
 
-# --- 3. GỬI BÁO CÁO (Tóm tắt) ---
-def send_report_logic(project_name, config, pic_stats):
-    s_no, s_start, s_end = get_current_sprint_info(config)
-    time_str = datetime.now(VN_TZ).strftime('%H:%M')
-    msg = f"🤖 **AUTO REPORT ({time_str})**\n🚩 **{project_name.upper()} - SPRINT {int(s_no)}**\n──────────────────────────────\n"
-    for _, r in pic_stats.iterrows():
-        icon = PIC_ICONS.get(r['PIC'], DEFAULT_ICON)
-        msg += f"{icon} **{r['PIC']}**\n┣ Tiến độ: **{r['percent']}%**\n┣ ✅ Xong: {int(r['done_count'])} | 🚧 Đang: {int(r['doing_count'])}\n┣ ⌚ Giờ: {round(r['real_total'],1)}h / {round(r['est_total'],1)}h\n"
-        if r['pending_count'] > 0:
-            msg += f"┗ ⏳ **Trống State: {int(r['pending_count'])} task**\n"
-        else: msg += f"┗ ✅ Đã cập nhật đủ!\n"
-        msg += "──────────────────────────────\n"
+# --- 3. GIAO DIỆN STREAMLIT ---
+st.set_page_config(page_title="Sprint Dashboard", layout="wide", initial_sidebar_state="collapsed")
 
-    try:
-        if config['platform'] == "Telegram" and config.get('bot_token'):
-            url = f"https://api.telegram.org/bot{config['bot_token']}/sendMessage"
-            requests.post(url, json={"chat_id": config['chat_id'], "text": msg, "parse_mode": "Markdown", "message_thread_id": config.get('topic_id')}, timeout=10)
-        elif config['platform'] == "Discord" and "http" in str(config.get('webhook_url')):
-            requests.post(config['webhook_url'], json={"content": msg}, timeout=10)
-    except: pass
-
-# --- 4. CHẠY TỰ ĐỘNG ---
-if "--action" in sys.argv:
-    target = sys.argv[2].lower() if len(sys.argv) > 2 else "all"
-    for name, cfg in PROJECTS.items():
-        if target == "all" or target in name.lower():
-            stats = get_data_and_process.__wrapped__(name)
-            if stats is not None: send_report_logic(name, cfg, stats)
-    sys.exit(0)
-
-# --- 5. GIAO DIỆN STREAMLIT ---
-st.set_page_config(page_title="Sprint Dashboard", layout="wide")
+# Sidebar chọn dự án
 st.sidebar.title("📁 Dự án")
-for name in PROJECTS.keys():
-    if st.sidebar.button(name, use_container_width=True, type="primary" if st.get_option("server.baseUrlPath") == name else "secondary"):
-        st.session_state.selected_project = name
-
 if 'selected_project' not in st.session_state:
     st.session_state.selected_project = list(PROJECTS.keys())[0]
+
+for name in PROJECTS.keys():
+    if st.sidebar.button(name, use_container_width=True, type="primary" if st.session_state.selected_project == name else "secondary"):
+        st.session_state.selected_project = name
+        st.rerun()
 
 config = PROJECTS[st.session_state.selected_project]
 pic_stats = get_data_and_process(st.session_state.selected_project)
@@ -189,40 +162,60 @@ pic_stats = get_data_and_process(st.session_state.selected_project)
 if pic_stats is not None:
     s_no, s_start, s_end = get_current_sprint_info(config)
     st.title(f"🚀 {st.session_state.selected_project}")
-    st.subheader(f"🚩 Sprint {int(s_no)} ({s_start.strftime('%d/%m')} - {s_end.strftime('%d/%m')})")
-    
-    # Dashboard Grid
-    cols = st.columns(len(pic_stats) if len(pic_stats) < 6 else 5)
-    for i, row in pic_stats.iterrows():
-        with cols[i % 5]:
-            icon = PIC_ICONS.get(row['PIC'], DEFAULT_ICON)
-            st.markdown(f"### {icon} {row['PIC']}")
-            st.metric("Tiến độ", f"{row['percent']}%")
-            st.caption(f"⌚ {round(row['real_total'],1)}h / {round(row['est_total'],1)}h")
-            st.progress(min(row['percent']/100, 1.0))
-            
-            # Chi tiết Task
-            with st.expander("Chi tiết Task"):
-                d = row['details']
-                if d['doing']:
-                    st.write("🚧 **Đang làm:**")
-                    for us, tasks in d['doing'].items():
-                        st.markdown(f"📌 *{us}*")
-                        for t in tasks: st.caption(f"  + {t}")
-                
-                if d['pending']:
-                    st.write("⏳ **Chưa có State:**")
-                    for us, tasks in d['pending'].items():
-                        st.markdown(f"📌 *{us}*")
-                        for t in tasks: st.caption(f"  + {t}")
+    st.caption(f"📅 Sprint {int(s_no)}: {s_start.strftime('%d/%m')} - {s_end.strftime('%d/%m')}")
 
-                if d['done']:
-                    st.write("✅ **Đã xong:**")
-                    for us, tasks in d['done'].items():
-                        st.markdown(f"📌 *{us}*")
-                        for t in tasks: st.caption(f"  + {t}")
-            st.divider()
-    
-    st.plotly_chart(px.bar(pic_stats, x='PIC', y=['est_total', 'real_total'], barmode='group', title="So sánh giờ dự kiến và thực tế"), use_container_width=True)
+    # --- PHẦN TỔNG KẾT TOÀN TEAM ---
+    st.divider()
+    t_cols = st.columns(4)
+    with t_cols[0]:
+        st.metric("✅ Tổng Xong", f"{int(pic_stats['done_count'].sum())} task")
+    with t_cols[1]:
+        st.metric("🚧 Tổng Đang làm", f"{int(pic_stats['doing_count'].sum())} task")
+    with t_cols[2]:
+        st.metric("⏳ Tổng Tồn", f"{int(pic_stats['pending_count'].sum())} task", delta_color="inverse")
+    with t_cols[3]:
+        total_h = pic_stats['real_total'].sum()
+        st.metric("⌚ Tổng Giờ Real", f"{round(total_h, 1)}h")
+    st.divider()
+
+    # --- DANH SÁCH PIC ---
+    # Hiển thị dạng thẻ
+    for i in range(0, len(pic_stats), 2): # Chia 2 cột trên mobile cho cân đối
+        cols = st.columns(2)
+        for j in range(2):
+            idx = i + j
+            if idx < len(pic_stats):
+                row = pic_stats.iloc[idx]
+                with cols[j]:
+                    icon = PIC_ICONS.get(row['PIC'], DEFAULT_ICON)
+                    st.markdown(f"#### {icon} {row['PIC']}")
+                    st.progress(min(row['percent']/100, 1.0))
+                    
+                    # Thông số 3 loại task
+                    c1, c2, c3 = st.columns(3)
+                    c1.caption(f"✅ **{int(row['done_count'])}**")
+                    c2.caption(f"🚧 **{int(row['doing_count'])}**")
+                    c3.caption(f"⏳ **{int(row['pending_count'])}**")
+                    
+                    st.caption(f"⌚ {round(row['real_total'],1)}h / {round(row['est_total'],1)}h ({row['percent']}%)")
+                    
+                    with st.expander("Chi tiết task"):
+                        d = row['details']
+                        if d['doing']:
+                            st.write("🚧 **Đang làm:**")
+                            for us, tasks in d['doing'].items():
+                                for t in tasks: st.markdown(f"- <small>{t}</small>", unsafe_allow_html=True)
+                        if d['pending']:
+                            st.write("⏳ **Trống State:**")
+                            for us, tasks in d['pending'].items():
+                                for t in tasks: st.markdown(f"- <small style='color:orange'>{t}</small>", unsafe_allow_html=True)
+                        if d['done']:
+                            st.write("✅ **Đã xong:**")
+                            for us, tasks in d['done'].items():
+                                for t in tasks: st.markdown(f"- <small style='color:gray'>{t}</small>", unsafe_allow_html=True)
+                st.write("") # Khoảng cách giữa các hàng
+
+    st.plotly_chart(px.bar(pic_stats, x='PIC', y=['est_total', 'real_total'], barmode='group', title="Biểu đồ giờ dự án"), use_container_width=True)
+
 else:
-    st.info("Đang tải dữ liệu...")
+    st.info("Đang kiểm tra dữ liệu từ Google Sheets...")
