@@ -26,7 +26,8 @@ PROJECTS = {
         "chat_id": "-1002102856307",
         "topic_id": 18251,
         "sprint_start_date": "2026-03-02", 
-        "base_sprint_no": 33                
+        "base_sprint_no": 33 
+        "sprint_duration": 11
     },
     "Sprint Team Debuffer": {
         "url": "https://docs.google.com/spreadsheets/d/1llUlTDfR413oZelu-AoMsC0lEzHqXOkB4SCwc_4zmAo/edit?pli=1&gid=982443592#gid=982443592",
@@ -35,6 +36,7 @@ PROJECTS = {
         "webhook_url": "https://discord.com/api/webhooks/1469191941261492386/gZ1sx5hnTojIKw5kp5quEotwIldRmCIlhXkZBu9M1Ejs-ZgEUtGsYHlS2CwIWguNbrzc",
         "sprint_start_date": "2026-02-23", 
         "base_sprint_no": 7
+        "sprint_duration": 11
     },
     "Sprint Team Skybow": {
         "url": "https://docs.google.com/spreadsheets/d/157YuS6Sq_Sr6GGl-Ze0Jb0vaIbXZMvlZmU1Yqni-6g4/edit?pli=1&gid=982443592#gid=982443592",
@@ -45,6 +47,7 @@ PROJECTS = {
         "topic_id": 2447,
         "sprint_start_date": "2026-02-24",
         "base_sprint_no": 13
+        "sprint_duration": 14
     }
 }
 
@@ -55,7 +58,7 @@ def get_current_sprint_info(config):
     sprint_elapsed = max(0, days_diff // 14)
     current_sprint_no = config['base_sprint_no'] + sprint_elapsed
     current_sprint_start = base_date + timedelta(days=sprint_elapsed * 14)
-    current_sprint_end = current_sprint_start + timedelta(days=13)
+    current_sprint_end = current_sprint_start + timedelta(days=11)
     return current_sprint_no, current_sprint_start, current_sprint_end
 
 # --- 2. XỬ LÝ DỮ LIỆU ---
