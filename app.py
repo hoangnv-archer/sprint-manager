@@ -88,7 +88,6 @@ def get_data_and_process(config_name):
                 
                 if not title or title.lower() == 'nan': continue
                 
-                # Logic: Nếu PIC trống và State trống -> Đây là dòng tiêu đề Userstory màu xám
                 if (not pic or pic.lower() == 'nan') and (not state or state.lower() == 'nan'):
                     current_us = title
                 else:
@@ -123,10 +122,11 @@ def get_data_and_process(config_name):
             stats['pending_grouped'] = [x[0] for x in res]
             stats['pending_count'] = [x[1] for x in res]
             stats['percent'] = (stats['done'] / stats['total'] * 100).fillna(0).round(1)
+            
             return stats
         return None
     except Exception as e:
-        if "--action" not in sys.argv: st.error(f"Lỗi đọc dữ liệu: {e}")
+        if "--action" not in sys.argv: st.error(f"Lỗi: {e}")
         return None
 
 # --- 3. GỬI BÁO CÁO ---
@@ -137,29 +137,35 @@ def send_report_logic(project_name, config, pic_stats):
     for _, r in pic_stats.iterrows():
         icon = PIC_ICONS.get(r['PIC'], DEFAULT_ICON)
         msg += f"{icon} **{r['PIC']}**\n┣ Tiến độ: **{r['percent']}%**\n┣ ✅ Xong: {int(r['done'])} | 🚧 Đang: {int(r['doing'])}\n"
+        
         if r['pending_count'] > 0:
             msg += f"┗ ⏳ **Trống State: {int(r['pending_count'])} task**\n"
-        else: msg += f"┗ ✅ Đã cập nhật đủ!\n"
+        else:
+            msg += f"┗ ✅ Đã cập nhật đủ!\n"
         msg += "──────────────────────────────\n"
 
     try:
+        # KIỂM TRA SCHEMA TRƯỚC KHI GỬI (FIX LỖI ẢNH 1)
         if config['platform'] == "Telegram" and config.get('bot_token'):
             url = f"https://api.telegram.org/bot{config['bot_token']}/sendMessage"
             requests.post(url, json={"chat_id": config['chat_id'], "text": msg, "parse_mode": "Markdown", "message_thread_id": config.get('topic_id')}, timeout=10)
-        elif config['platform'] == "Discord" and "http" in str(config.get('webhook_url')):
+        elif config['platform'] == "Discord" and config.get('webhook_url') and "http" in str(config.get('webhook_url')):
             requests.post(config['webhook_url'], json={"content": msg}, timeout=10)
-    except: pass
+    except Exception as e:
+        print(f"Lỗi gửi báo cáo {project_name}: {e}")
 
 # --- 4. CHẠY TỰ ĐỘNG ---
 if "--action" in sys.argv:
     target = sys.argv[2].lower() if len(sys.argv) > 2 else "all"
     for name, cfg in PROJECTS.items():
         if target == "all" or target in name.lower():
+            # Sử dụng __wrapped__ để gọi hàm gốc không qua cache
             stats = get_data_and_process.__wrapped__(name)
-            if stats is not None: send_report_logic(name, cfg, stats)
+            if stats is not None:
+                send_report_logic(name, cfg, stats)
     sys.exit(0)
 
-# --- 5. GIAO DIỆN STREAMLIT ---
+# --- 5. GIAO DIỆN WEB ---
 st.set_page_config(page_title="Sprint Dashboard", layout="wide")
 if 'selected_project' not in st.session_state:
     st.session_state.selected_project = list(PROJECTS.keys())[0]
@@ -177,10 +183,11 @@ if pic_stats is not None:
     s_no, s_start, s_end = get_current_sprint_info(config)
     st.title(f"🚀 {st.session_state.selected_project}")
     st.subheader(f"🚩 Sprint {int(s_no)} ({s_start.strftime('%d/%m')} - {s_end.strftime('%d/%m')})")
+    
     if st.sidebar.button("📤 Gửi báo cáo ngay"):
         send_report_logic(st.session_state.selected_project, config, pic_stats)
         st.sidebar.success("Đã gửi báo cáo!")
-    
+
     cols = st.columns(5)
     for i, row in pic_stats.iterrows():
         with cols[i % 5]:
@@ -190,8 +197,10 @@ if pic_stats is not None:
             if row['pending_count'] > 0:
                 with st.expander(f"⏳ Tồn: {int(row['pending_count'])}"):
                     for us, tasks in row['pending_grouped'].items():
-                        st.markdown(f"**{us}**")
+                        st.markdown(f"**📌 {us}**")
                         for t in tasks: st.caption(f"• {t}")
             st.divider()
+    
     st.plotly_chart(px.bar(pic_stats, x='PIC', y=['est_total', 'real_total'], barmode='group'), use_container_width=True)
-else: st.info("Đang kiểm tra dữ liệu...")
+else:
+    st.info("Không tìm thấy dữ liệu phù hợp hoặc lỗi kết nối...")
