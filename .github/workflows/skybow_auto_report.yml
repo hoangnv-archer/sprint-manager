@@ -2,8 +2,8 @@ name: Skybow Auto Report
 
 on:
   schedule:
-    - cron: '30 0 * * 1-5'  # 08:30 AM VN (Thứ 2 - Thứ 6)
-     workflow_dispatch:
+    - cron: '30 0 * * 1-5'
+  workflow_dispatch:
 
 jobs:
   report:
@@ -15,6 +15,5 @@ jobs:
           python-version: '3.9'
       - name: Install dependencies
         run: pip install pandas requests streamlit streamlit-gsheets plotly
-      - name: Run Skybow Only
-        # Lệnh này chỉ kích hoạt gửi cho Skybow nhờ logic lọc ở bước 1
+      - name: Run Report
         run: python app.py --action skybow
