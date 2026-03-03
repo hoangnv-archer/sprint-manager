@@ -120,24 +120,8 @@ def get_data_and_process(config_name):
             ).reset_index()
             stats.rename(columns={'PIC_Clean': 'PIC'}, inplace=True)
 
-            # Dự báo & Velocity
-            now_dt = datetime.now(VN_TZ)
-            _, s_start, _ = get_current_sprint_info(config)
-            days_passed = max(1, (now_dt.date() - s_start).days)
-            stats['velocity'] = (stats['real_total'] / days_passed).round(1)
-
-            def predict_finish(row):
-                rem_h = max(0, row['est_sprint'] - row['real_sprint'])
-                if row['velocity'] > 0:
-                    d = rem_h / row['velocity']
-                    return (now_dt.date() + timedelta(days=int(d))).strftime('%d/%m')
-                return "N/A"
-            stats['eta'] = stats.apply(predict_finish, axis=1)
-
             def get_structured_tasks(pic):
                 p_df = df_team[df_team['PIC_Clean'] == pic]
-                
-                # Hàm trợ giúp nhóm task theo US
                 def group_tasks(subset):
                     if subset.empty: return {}
                     return subset.groupby('Assigned_US')[['Userstory/Todo', 'State', 'Real', 'Estimate Dev']].apply(lambda x: x.to_dict('records')).to_dict()
@@ -155,7 +139,7 @@ def get_data_and_process(config_name):
             stats['percent'] = (stats['done_count'] / stats['total'] * 100).fillna(0).round(1)
             return stats
     except Exception as e:
-        st.error(f"Lỗi: {e}")
+        st.error(f"Lỗi hệ thống: {e}")
     return None
 
 # --- 3. GỬI BÁO CÁO BOT ---
@@ -168,7 +152,7 @@ def send_report_logic(project_name, config, pic_stats):
         msg += f"{icon} **{r['PIC']}** ({r['percent']}%)\n"
         msg += f"┣ 📅 Sprint: {round(r['real_sprint'],1)}h/{round(r['est_sprint'],1)}h\n"
         if r['real_extra'] > 0: msg += f"┣ 🆘 Ngoài Sprint: {round(r['real_extra'],1)}h\n"
-        msg += f"┣ 🏁 Dự kiến: {r['eta']}\n"
+        
         stt = f"┗ ✅: {int(r['done_count'])} | 🚧: {int(r['doing_count'])}"
         if r['pending_count'] > 0: stt += f" | ⚠️ Trống: {int(r['pending_count'])}"
         msg += stt + "\n──────────────────────────────\n"
@@ -209,7 +193,7 @@ if pic_stats is not None:
     
     if st.sidebar.button("📤 Gửi báo cáo ngay"):
         send_report_logic(st.session_state.selected_project, config, pic_stats)
-        st.sidebar.success("Đã gửi báo cáo!")
+        st.sidebar.success("Đã gửi báo cáo thành công!")
 
     st.divider()
     t_cols = st.columns(4)
@@ -229,15 +213,14 @@ if pic_stats is not None:
                     icon = PIC_ICONS.get(row['PIC'], DEFAULT_ICON)
                     st.markdown(f"#### {icon} {row['PIC']}")
                     st.progress(min(row['percent']/100, 1.0))
-                    m1, m2, m3 = st.columns(3)
-                    m1.metric("Sprint R/E", f"{round(row['real_sprint'],1)}h/{round(row['est_sprint'],1)}h")
+                    
+                    m1, m2 = st.columns(2)
+                    m1.metric("Sprint Real/Est", f"{round(row['real_sprint'],1)}h/{round(row['est_sprint'],1)}h")
                     m2.metric("Ngoài Sprint", f"{round(row['real_extra'],1)}h")
-                    m3.metric("Dự kiến Xong", row['eta'])
                     
                     with st.expander("🔍 Chi tiết theo User Story"):
                         d = row['details']
-                        
-                        # Nhóm 1: TRỐNG STATE (Nhóm theo US)
+                        # Nhóm 1: TRỐNG STATE (Theo US)
                         if d['pending_grouped']:
                             st.error(f"⚠️ **Chưa cập nhật State ({row['pending_count']} task):**")
                             for us, tasks in d['pending_grouped'].items():
@@ -246,20 +229,21 @@ if pic_stats is not None:
                         
                         # Nhóm 2: SPRINT TASKS
                         if d['sprint_grouped']:
-                            st.info("📅 **Sprint Tasks:**")
+                            st.info("📅 **Sprint Tasks (Có kế hoạch):**")
                             for us, tasks in d['sprint_grouped'].items():
                                 st.markdown(f"**📌 {us}**")
                                 for t in tasks: st.caption(f"└ {t['Userstory/Todo']} (`{t['State']}` | {t['Real']}h/{t['Estimate Dev']}h)")
                         
                         # Nhóm 3: NGOÀI SPRINT
                         if d['extra_grouped']:
-                            st.warning("🆘 **Ngoài Sprint:**")
+                            st.warning("🆘 **Ngoài Sprint (Phát sinh):**")
                             for us, tasks in d['extra_grouped'].items():
                                 st.markdown(f"**📌 {us}**")
                                 for t in tasks: st.caption(f"└ {t['Userstory/Todo']} (`{t['State']}` | {t['Real']}h)")
                 st.divider()
 
-    st.write("### 📊 Năng lực & Tốc độ")
-    fig = px.scatter(pic_stats, x="total", y="velocity", size="real_total", color="PIC",
-                     hover_name="PIC", labels={"total": "Tổng số Task", "velocity": "Tốc độ (h/ngày)"})
+    st.write("### 📊 Tổng quan công việc")
+    # Biểu đồ Scatter chỉ hiển thị số lượng task và giờ làm thực tế
+    fig = px.scatter(pic_stats, x="total", y="real_total", size="real_total", color="PIC",
+                     hover_name="PIC", labels={"total": "Tổng số Task", "real_total": "Tổng giờ thực tế (h)"})
     st.plotly_chart(fig, use_container_width=True)
