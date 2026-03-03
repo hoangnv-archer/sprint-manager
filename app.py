@@ -108,44 +108,42 @@ def get_data_and_process(config_name):
             
             df_team = df_final[df_final['PIC_Clean'].isin(config['pics'])].copy()
             done_states = ['done', 'cancel', 'dev done']
-            
+
+            # Tách Is_Extra dựa trên việc có Estimate hay không
+            df_team['Is_Extra'] = df_team['Estimate Dev'] <= 0
+
             stats = df_team.groupby('PIC_Clean').agg(
                 total=('Userstory/Todo', 'count'),
                 done_count=('State_Clean', lambda x: x.isin(done_states).sum()),
                 doing_count=('State_Clean', lambda x: x.str.contains('progress').sum()),
-                est_total=('Estimate Dev', 'sum'),
+                est_sprint=('Estimate Dev', 'sum'),
+                # Chỉ tính Real cho Sprint task
+                real_sprint=('Real', lambda x: x[df_team.loc[x.index, 'Is_Extra'] == False].sum()),
+                # Chỉ tính Real cho Extra task
+                real_extra=('Real', lambda x: x[df_team.loc[x.index, 'Is_Extra'] == True].sum()),
                 real_total=('Real', 'sum')
             ).reset_index()
             stats.rename(columns={'PIC_Clean': 'PIC'}, inplace=True)
 
-            # --- PHÂN TÍCH HIỆU SUẤT & DỰ BÁO ---
-            stats['burn_rate'] = (stats['real_total'] / stats['est_total']).replace([float('inf'), -float('inf')], 0).fillna(0).round(2)
-            
+            # --- DỰ BÁO (Chỉ dựa trên Sprint Task) ---
             now_dt = datetime.now(VN_TZ)
             s_no, s_start, _ = get_current_sprint_info(config)
             days_passed = max(1, (now_dt.date() - s_start).days)
             stats['velocity'] = (stats['real_total'] / days_passed).round(1)
 
             def predict_finish(row):
-                remaining_h = max(0, row['est_total'] - row['real_total'])
+                remaining_h = max(0, row['est_sprint'] - row['real_sprint'])
                 if row['velocity'] > 0:
                     days_needed = remaining_h / row['velocity']
                     return (now_dt.date() + timedelta(days=int(days_needed))).strftime('%d/%m')
                 return "N/A"
             stats['eta'] = stats.apply(predict_finish, axis=1)
 
-            def evaluate_perf(rate):
-                if rate == 0: return "⚪ Trống"
-                if 0.8 <= rate <= 1.2: return "🟢 Ổn định"
-                if rate < 0.8: return "⚡ Nhanh"
-                return "🔴 Chậm"
-            stats['perf_status'] = stats['burn_rate'].apply(evaluate_perf)
-
             def get_tasks_detail(pic):
                 p_tasks = df_team[df_team['PIC_Clean'] == pic]
                 return {
-                    'done': p_tasks[p_tasks['State_Clean'].isin(done_states)].groupby('Assigned_US')['Userstory/Todo'].apply(list).to_dict(),
-                    'doing': p_tasks[p_tasks['State_Clean'].str.contains('progress')].groupby('Assigned_US')['Userstory/Todo'].apply(list).to_dict(),
+                    'sprint': p_tasks[p_tasks['Is_Extra'] == False].groupby('Assigned_US')['Userstory/Todo'].apply(list).to_dict(),
+                    'extra': p_tasks[p_tasks['Is_Extra'] == True].groupby('Assigned_US')['Userstory/Todo'].apply(list).to_dict(),
                     'pending': p_tasks[p_tasks['State_Clean'] == ''].groupby('Assigned_US')['Userstory/Todo'].apply(list).to_dict(),
                     'pending_count': len(p_tasks[p_tasks['State_Clean'] == ''])
                 }
@@ -154,6 +152,9 @@ def get_data_and_process(config_name):
             stats['details'] = details
             stats['pending_count'] = [x['pending_count'] for x in details]
             stats['percent'] = (stats['done_count'] / stats['total'] * 100).fillna(0).round(1)
+            
+            # Giữ lại burn_rate cho Scatter Chart (dựa trên Sprint tasks)
+            stats['burn_rate'] = (stats['real_sprint'] / stats['est_sprint']).replace([float('inf'), -float('inf')], 0).fillna(0).round(2)
             return stats
     except Exception as e:
         if "--action" in sys.argv: print(f"❌ Lỗi: {e}")
@@ -167,12 +168,15 @@ def send_report_logic(project_name, config, pic_stats):
     msg = f"🤖 **AUTO REPORT ({time_str})**\n🚩 **{project_name.upper()} - SPRINT {int(s_no)}**\n──────────────────────────────\n"
     for _, r in pic_stats.iterrows():
         icon = PIC_ICONS.get(r['PIC'], DEFAULT_ICON)
-        msg += f"{icon} **{r['PIC']}**\n┣ Tiến độ: **{r['percent']}%**\n┣ ✅ Xong: {int(r['done_count'])} | 🚧 Đang: {int(r['doing_count'])}\n┣ ⌚ Giờ: {round(r['real_total'],1)}h/{round(r['est_total'],1)}h\n"
-        if r['pending_count'] > 0: 
-            msg += f"┗ ⚠️ **Trống State: {int(r['pending_count'])} task**\n"
-        else: 
-            msg += f"┗ ✅ Đã cập nhật đủ!\n"
-        msg += "──────────────────────────────\n"
+        msg += f"{icon} **{r['PIC']}** ({r['percent']}%)\n"
+        msg += f"┣ 📅 Sprint: {round(r['real_sprint'],1)}h/{round(r['est_sprint'],1)}h\n"
+        if r['real_extra'] > 0:
+            msg += f"┣ 🆘 Ngoài Sprint: {round(r['real_extra'],1)}h\n"
+        msg += f"┣ 🏁 Dự kiến: {r['eta']}\n"
+        
+        status = f"┗ ✅: {int(r['done_count'])} | 🚧: {int(r['doing_count'])}"
+        if r['pending_count'] > 0: status += f" | ⚠️ Trống: {int(r['pending_count'])}"
+        msg += status + "\n──────────────────────────────\n"
 
     try:
         if config['platform'] == "Telegram":
@@ -211,14 +215,14 @@ else:
         
         if st.sidebar.button("📤 Gửi báo cáo ngay"):
             send_report_logic(st.session_state.selected_project, config, pic_stats)
-            st.sidebar.success("Đã gửi thành công!")
+            st.sidebar.success("Đã gửi báo cáo thành công!")
 
         st.divider()
         t_cols = st.columns(4)
-        t_cols[0].metric("✅ Tổng Xong", f"{int(pic_stats['done_count'].sum())}")
-        t_cols[1].metric("🚧 Tổng Đang làm", f"{int(pic_stats['doing_count'].sum())}")
-        t_cols[2].metric("⏳ Tổng Tồn", f"{int(pic_stats['pending_count'].sum())}")
-        t_cols[3].metric("⌚ Tổng Real", f"{round(pic_stats['real_total'].sum(), 1)}h")
+        t_cols[0].metric("📅 Tổng Giờ Sprint", f"{round(pic_stats['est_sprint'].sum(), 1)}h")
+        t_cols[1].metric("⌚ Thực tế Sprint", f"{round(pic_stats['real_sprint'].sum(), 1)}h")
+        t_cols[2].metric("🆘 Ngoài Sprint", f"{round(pic_stats['real_extra'].sum(), 1)}h")
+        t_cols[3].metric("✅ Tỷ lệ Xong", f"{int(pic_stats['percent'].mean())}%")
         st.divider()
 
         for i in range(0, len(pic_stats), 2):
@@ -232,37 +236,33 @@ else:
                         st.markdown(f"#### {icon} {row['PIC']}")
                         st.progress(min(row['percent']/100, 1.0))
                         
-                        p1, p2, p3 = st.columns(3)
-                        p1.metric("Hiệu suất", f"{row['burn_rate']}x", row['perf_status'], delta_color="off")
-                        p2.metric("Tốc độ", f"{row['velocity']}h/d")
-                        p3.metric("Dự kiến Xong", row['eta'])
+                        m1, m2, m3 = st.columns(3)
+                        m1.metric("Sprint Real/Est", f"{round(row['real_sprint'],1)}h/{round(row['est_sprint'],1)}h")
+                        m2.metric("Ngoài Sprint", f"{round(row['real_extra'],1)}h")
+                        m3.metric("Dự kiến Xong", row['eta'])
 
-                        c1, c2, c3 = st.columns(3)
-                        c1.caption(f"✅ {int(row['done_count'])}")
-                        c2.caption(f"🚧 {int(row['doing_count'])}")
-                        c3.caption(f"⏳ {int(row['pending_count'])}") # Đã khôi phục hiển thị Pending
-                        
                         with st.expander("Chi tiết Task"):
                             d = row['details']
-                            # Hiển thị các task chưa có State
                             if d['pending']:
-                                st.error("⏳ **Chưa có State (Cần cập nhật):**")
-                                for us, t_list in d['pending'].items():
-                                    st.markdown(f"📌 *{us}*")
-                                    for t in t_list: st.caption(f"  + {t}")
+                                st.error("⚠️ **Chưa có State:**")
+                                for us, tasks in d['pending'].items():
+                                    for t in tasks: st.caption(f"- {t}")
                             
-                            if d['doing']:
-                                st.info("🚧 **Đang làm:**")
-                                for us, t_list in d['doing'].items():
-                                    st.markdown(f"📌 *{us}*")
-                                    for t in t_list: st.caption(f"  + {t}")
+                            if d['sprint']:
+                                st.info("📅 **Sprint Tasks:**")
+                                for us, tasks in d['sprint'].items():
+                                    for t in tasks: st.caption(f"- {t}")
+
+                            if d['extra']:
+                                st.warning("🆘 **Ngoài Sprint:**")
+                                for us, tasks in d['extra'].items():
+                                    for t in tasks: st.caption(f"- {t}")
                     st.divider()
 
-        # Biểu đồ Performance Scatter
-        st.write("### 📊 Phân tích năng lực PIC")
+        st.write("### 📊 Phân tích hiệu suất Sprint (Scatter)")
+        # Phân tích dựa trên task có trong kế hoạch
         fig_perf = px.scatter(
-            pic_stats, x="total", y="velocity", size="real_total", color="perf_status",
-            hover_name="PIC", labels={"total": "Số lượng Task", "velocity": "Tốc độ (Giờ/Ngày)"},
-            color_discrete_map={"🟢 Ổn định": "#2ecc71", "🔴 Chậm": "#e74c3c", "⚡ Nhanh": "#3498db", "⚪ Trống": "#95a5a6"}
+            pic_stats, x="est_sprint", y="velocity", size="real_sprint", 
+            hover_name="PIC", labels={"est_sprint": "Khối lượng Sprint (h)", "velocity": "Tốc độ (h/ngày)"}
         )
         st.plotly_chart(fig_perf, use_container_width=True)
