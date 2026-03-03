@@ -136,15 +136,22 @@ def get_data_and_process(config_name):
 
             def get_structured_tasks(pic):
                 p_df = df_team[df_team['PIC_Clean'] == pic]
+                
+                # Hàm trợ giúp nhóm task theo US
+                def group_tasks(subset):
+                    if subset.empty: return {}
+                    return subset.groupby('Assigned_US')[['Userstory/Todo', 'State', 'Real', 'Estimate Dev']].apply(lambda x: x.to_dict('records')).to_dict()
+
                 return {
-                    'sprint_grouped': p_df[p_df['Is_Extra'] == False].groupby('Assigned_US')[['Userstory/Todo', 'State', 'Real', 'Estimate Dev']].apply(lambda x: x.to_dict('records')).to_dict(),
-                    'extra_grouped': p_df[p_df['Is_Extra'] == True].groupby('Assigned_US')[['Userstory/Todo', 'State', 'Real']].apply(lambda x: x.to_dict('records')).to_dict(),
-                    'pending_list': p_df[p_df['State_Clean'] == '']['Userstory/Todo'].tolist()
+                    'pending_grouped': group_tasks(p_df[p_df['State_Clean'] == '']),
+                    'sprint_grouped': group_tasks(p_df[(p_df['Is_Extra'] == False) & (p_df['State_Clean'] != '')]),
+                    'extra_grouped': group_tasks(p_df[(p_df['Is_Extra'] == True) & (p_df['State_Clean'] != '')]),
+                    'pending_count': len(p_df[p_df['State_Clean'] == ''])
                 }
 
             details = stats['PIC'].apply(get_structured_tasks)
             stats['details'] = details
-            stats['pending_count'] = stats['details'].apply(lambda x: len(x['pending_list']))
+            stats['pending_count'] = stats['details'].apply(lambda x: x['pending_count'])
             stats['percent'] = (stats['done_count'] / stats['total'] * 100).fillna(0).round(1)
             return stats
     except Exception as e:
@@ -209,7 +216,7 @@ if pic_stats is not None:
     t_cols[0].metric("📅 Tổng Sprint Est", f"{round(pic_stats['est_sprint'].sum(),1)}h")
     t_cols[1].metric("⌚ Thực tế Sprint", f"{round(pic_stats['real_sprint'].sum(),1)}h")
     t_cols[2].metric("🆘 Ngoài Sprint", f"{round(pic_stats['real_extra'].sum(),1)}h")
-    t_cols[3].metric("⏳ Task Trống State", f"{int(pic_stats['pending_count'].sum())}")
+    t_cols[3].metric("⏳ Tổng Trống State", f"{int(pic_stats['pending_count'].sum())}")
     st.divider()
 
     for i in range(0, len(pic_stats), 2):
@@ -229,14 +236,22 @@ if pic_stats is not None:
                     
                     with st.expander("🔍 Chi tiết theo User Story"):
                         d = row['details']
-                        if d['pending_list']:
-                            st.error(f"⚠️ **Trống State ({len(d['pending_list'])} task):**")
-                            for t in d['pending_list']: st.caption(f"• {t}")
+                        
+                        # Nhóm 1: TRỐNG STATE (Nhóm theo US)
+                        if d['pending_grouped']:
+                            st.error(f"⚠️ **Chưa cập nhật State ({row['pending_count']} task):**")
+                            for us, tasks in d['pending_grouped'].items():
+                                st.markdown(f"**📌 {us}**")
+                                for t in tasks: st.caption(f"└ {t['Userstory/Todo']}")
+                        
+                        # Nhóm 2: SPRINT TASKS
                         if d['sprint_grouped']:
                             st.info("📅 **Sprint Tasks:**")
                             for us, tasks in d['sprint_grouped'].items():
                                 st.markdown(f"**📌 {us}**")
                                 for t in tasks: st.caption(f"└ {t['Userstory/Todo']} (`{t['State']}` | {t['Real']}h/{t['Estimate Dev']}h)")
+                        
+                        # Nhóm 3: NGOÀI SPRINT
                         if d['extra_grouped']:
                             st.warning("🆘 **Ngoài Sprint:**")
                             for us, tasks in d['extra_grouped'].items():
@@ -245,7 +260,6 @@ if pic_stats is not None:
                 st.divider()
 
     st.write("### 📊 Năng lực & Tốc độ")
-    # Kích thước bóng đại diện cho tổng khối lượng (Sprint + Extra)
     fig = px.scatter(pic_stats, x="total", y="velocity", size="real_total", color="PIC",
                      hover_name="PIC", labels={"total": "Tổng số Task", "velocity": "Tốc độ (h/ngày)"})
     st.plotly_chart(fig, use_container_width=True)
