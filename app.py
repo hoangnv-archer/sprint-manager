@@ -167,10 +167,11 @@ def send_report_logic(project_name, config, pic_stats):
     msg = f"🤖 **AUTO REPORT ({time_str})**\n🚩 **{project_name.upper()} - SPRINT {int(s_no)}**\n──────────────────────────────\n"
     for _, r in pic_stats.iterrows():
         icon = PIC_ICONS.get(r['PIC'], DEFAULT_ICON)
-        eta_str = f"🏁 Xong dự kiến: {r['eta']}" if r['eta'] != "N/A" else "🏁 Chưa đủ dữ liệu dự báo"
-        msg += f"{icon} **{r['PIC']}** ({r['perf_status']})\n┣ {eta_str}\n┣ Tiến độ: **{r['percent']}%**\n┣ ✅ Xong: {int(r['done_count'])} | 🚧 Đang: {int(r['doing_count'])}\n┣ ⌚ V: {r['velocity']}h/d | 🔥 Rate: {r['burn_rate']}x\n"
-        if r['pending_count'] > 0: msg += f"┗ ⚠️ **Trống State: {int(r['pending_count'])} task**\n"
-        else: msg += f"┗ ✅ Đã cập nhật đủ!\n"
+        msg += f"{icon} **{r['PIC']}**\n┣ Tiến độ: **{r['percent']}%**\n┣ ✅ Xong: {int(r['done_count'])} | 🚧 Đang: {int(r['doing_count'])}\n┣ ⌚ Giờ: {round(r['real_total'],1)}h/{round(r['est_total'],1)}h\n"
+        if r['pending_count'] > 0: 
+            msg += f"┗ ⚠️ **Trống State: {int(r['pending_count'])} task**\n"
+        else: 
+            msg += f"┗ ✅ Đã cập nhật đủ!\n"
         msg += "──────────────────────────────\n"
 
     try:
