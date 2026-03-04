@@ -62,6 +62,44 @@ def get_current_sprint_info(config):
     current_sprint_end = current_sprint_start + timedelta(days=duration)
     return current_sprint_no, current_sprint_start, current_sprint_end
 
+# --- 1.1 HÀM LƯU TRỮ DỮ LIỆU ---
+def archive_sprint_data(config, stats):
+    try:
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        s_no, s_start, s_end = get_current_sprint_info(config)
+        
+        # Chuẩn bị dòng dữ liệu mới
+        new_entry = pd.DataFrame([{
+            "Sprint": int(s_no),
+            "Start": s_start.strftime('%d/%m/%Y'),
+            "End": s_end.strftime('%d/%m/%Y'),
+            "Total_Est": round(stats['est_sprint'].sum(), 1),
+            "Total_Real": round(stats['real_sprint'].sum(), 1),
+            "Total_Extra": round(stats['real_extra'].sum(), 1),
+            "Done_Rate": f"{int(stats['percent'].mean())}%",
+            "Updated_At": datetime.now(VN_TZ).strftime('%H:%M:%S %d/%m/%Y')
+        }])
+        
+        try:
+            # Đọc lịch sử hiện tại
+            history_df = conn.read(spreadsheet=config['url'], worksheet="History", ttl=0)
+            if not history_df.empty:
+                # Xóa dòng cũ nếu trùng số Sprint để cập nhật mới nhất
+                history_df['Sprint'] = pd.to_numeric(history_df['Sprint'], errors='coerce')
+                history_df = history_df[history_df['Sprint'] != int(s_no)]
+                updated_history = pd.concat([history_df, new_entry], ignore_index=True)
+            else:
+                updated_history = new_entry
+        except:
+            # Nếu chưa có sheet History thì tạo mới hoàn toàn
+            updated_history = new_entry
+            
+        conn.update(spreadsheet=config['url'], worksheet="History", data=updated_history)
+        return True
+    except Exception as e:
+        st.error(f"Lỗi lưu trữ: {e}. Đảm bảo bạn đã tạo sheet 'History'.")
+        return False
+
 # --- 2. XỬ LÝ DỮ LIỆU ---
 def get_data_and_process(config_name):
     config = PROJECTS[config_name]
@@ -191,16 +229,39 @@ if pic_stats is not None:
     st.title(f"🚀 {st.session_state.selected_project}")
     st.caption(f"📅 Sprint {int(s_no)}: {s_start.strftime('%d/%m')} - {s_end.strftime('%d/%m')}")
     
-    if st.sidebar.button("📤 Gửi báo cáo ngay"):
+    # --- Side Bar Actions ---
+    st.sidebar.divider()
+    if st.sidebar.button("📤 Gửi báo cáo Bot", use_container_width=True):
         send_report_logic(st.session_state.selected_project, config, pic_stats)
-        st.sidebar.success("Đã gửi báo cáo thành công!")
+        st.sidebar.success("Đã gửi báo cáo Bot!")
 
+    if st.sidebar.button("💾 Lưu trữ Sprint", use_container_width=True):
+        if archive_sprint_data(config, pic_stats):
+            st.sidebar.success(f"Đã lưu trữ Sprint {int(s_no)} vào Sheet History!")
+
+    # Summary Metrics
     st.divider()
     t_cols = st.columns(4)
     t_cols[0].metric("📅 Tổng Sprint Est", f"{round(pic_stats['est_sprint'].sum(),1)}h")
     t_cols[1].metric("⌚ Thực tế Sprint", f"{round(pic_stats['real_sprint'].sum(),1)}h")
     t_cols[2].metric("🆘 Ngoài Sprint", f"{round(pic_stats['real_extra'].sum(),1)}h")
     t_cols[3].metric("⏳ Tổng Trống State", f"{int(pic_stats['pending_count'].sum())}")
+    
+    # --- PHẦN HIỂN THỊ LỊCH SỬ ---
+    with st.expander("📜 Xem lịch sử các Sprint (Worksheet: History)"):
+        try:
+            conn = st.connection("gsheets", type=GSheetsConnection)
+            history_df = conn.read(spreadsheet=config['url'], worksheet="History", ttl=0)
+            if not history_df.empty:
+                fig_hist = px.line(history_df, x="Sprint", y=["Total_Est", "Total_Real"], 
+                                   title="Xu hướng Giờ làm qua các Sprint", markers=True)
+                st.plotly_chart(fig_hist, use_container_width=True)
+                st.dataframe(history_df.sort_values("Sprint", ascending=False), use_container_width=True)
+            else:
+                st.info("Chưa có dữ liệu lịch sử.")
+        except:
+            st.warning("Vui lòng tạo một sheet trống tên 'History' trong file Google Sheets để bật tính năng này.")
+
     st.divider()
 
     for i in range(0, len(pic_stats), 2):
@@ -220,30 +281,26 @@ if pic_stats is not None:
                     
                     with st.expander("🔍 Chi tiết theo User Story"):
                         d = row['details']
-                        # Nhóm 1: TRỐNG STATE (Theo US)
                         if d['pending_grouped']:
                             st.error(f"⚠️ **Chưa cập nhật State ({row['pending_count']} task):**")
                             for us, tasks in d['pending_grouped'].items():
                                 st.markdown(f"**📌 {us}**")
                                 for t in tasks: st.caption(f"└ {t['Userstory/Todo']}")
                         
-                        # Nhóm 2: SPRINT TASKS
                         if d['sprint_grouped']:
-                            st.info("📅 **Sprint Tasks (Có kế hoạch):**")
+                            st.info("📅 **Sprint Tasks:**")
                             for us, tasks in d['sprint_grouped'].items():
                                 st.markdown(f"**📌 {us}**")
                                 for t in tasks: st.caption(f"└ {t['Userstory/Todo']} (`{t['State']}` | {t['Real']}h/{t['Estimate Dev']}h)")
                         
-                        # Nhóm 3: NGOÀI SPRINT
                         if d['extra_grouped']:
-                            st.warning("🆘 **Ngoài Sprint (Phát sinh):**")
+                            st.warning("🆘 **Ngoài Sprint:**")
                             for us, tasks in d['extra_grouped'].items():
                                 st.markdown(f"**📌 {us}**")
                                 for t in tasks: st.caption(f"└ {t['Userstory/Todo']} (`{t['State']}` | {t['Real']}h)")
                 st.divider()
 
     st.write("### 📊 Tổng quan công việc")
-    # Biểu đồ Scatter chỉ hiển thị số lượng task và giờ làm thực tế
     fig = px.scatter(pic_stats, x="total", y="real_total", size="real_total", color="PIC",
                      hover_name="PIC", labels={"total": "Tổng số Task", "real_total": "Tổng giờ thực tế (h)"})
     st.plotly_chart(fig, use_container_width=True)
