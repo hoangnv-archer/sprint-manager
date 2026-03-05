@@ -102,16 +102,21 @@ def send_realtime_reminder(project_name, config, missing_df):
     if missing_df.empty:
         st.sidebar.success("✅ Mọi người đã điền đủ giờ!")
         return
+    
     time_now = datetime.now(VN_TZ).strftime('%H:%M')
     msg = f"🔔 **NHẮC NHỞ CẬP NHẬT GIỜ REAL ({time_now})**\n"
     msg += f"🚩 Dự án: {project_name}\n"
     msg += "──────────────────────────────\n"
+    
     for pic in missing_df['PIC_Clean'].unique():
         pic_tasks = missing_df[missing_df['PIC_Clean'] == pic]
         icon = PIC_ICONS.get(pic, DEFAULT_ICON)
+        
+        # Chỉ hiển thị tên in đậm, không dùng ID/Tag
         msg += f"{icon} **{pic}** ơi, điền giờ Real cho:\n"
         for _, t in pic_tasks.iterrows():
-            msg += f"  • _{t['Userstory/Todo'][:40]}..._\n"
+            msg += f"  • _{t['Userstory/Todo'][:40]}..._ ({t['Estimate Dev']}h)\n"
+            
     msg += "──────────────────────────────\n"
     msg += "👉 *Vui lòng điền Real sau 5p hoàn thành task!*"
     try:
@@ -228,24 +233,28 @@ config = PROJECTS[st.session_state.selected_project]
 pic_stats, df_team = get_data_and_process(st.session_state.selected_project)
 
 if pic_stats is not None:
-    s_no, s_start, s_end = get_current_sprint_info(config)
-    st.title(f"🚀 {st.session_state.selected_project}")
-    
-    # --- SIDEBAR:🎯 KIỂM SOÁT REAL-TIME ---
+    # 1. Lấy dữ liệu thô để lọc task thiếu Real
+    # Logic: State là done/dev done VÀ Estimate > 0 VÀ Real chưa điền
+    done_states_reminder = ['done', 'dev done']
+    missing_real_df = df_team[
+        (df_team['State_Clean'].isin(done_states_reminder)) & 
+        (df_team['Estimate Dev'] > 0) & 
+        ((df_team['Real'] == 0) | (df_team['Real'].isna()))
+    ].copy()
+
     st.sidebar.divider()
     st.sidebar.subheader("🎯 Kiểm soát Real-time")
-    done_states = ['done', 'cancel', 'dev done']
-    missing_real_df = df_team[(df_team['State_Clean'].isin(done_states)) & ((df_team['Real'] == 0) | (df_team['Real'].isna()))].copy()
     
     if not missing_real_df.empty:
         st.sidebar.error(f"⚠️ {len(missing_real_df)} task chưa điền Real!")
-        if st.sidebar.button("🔔 Bắn tin nhắc nhở riêng", use_container_width=True, type="primary"):
+        if st.sidebar.button("🔔 Bắn tin nhắc nhở", use_container_width=True, type="primary"):
             send_realtime_reminder(st.session_state.selected_project, config, missing_real_df)
-        with st.sidebar.expander("Xem danh sách nợ"):
+        
+        with st.sidebar.expander("Danh sách chi tiết"):
             for _, r in missing_real_df.iterrows():
-                st.caption(f"• **{r['PIC_Clean']}**: {r['Userstory/Todo'][:20]}...")
+                st.caption(f"• **{r['PIC_Clean']}**: {r['Userstory/Todo'][:25]}...")
     else:
-        st.sidebar.success("💎 Mọi người đã điền đủ giờ!")
+        st.sidebar.success("💎 Tuyệt vời! Đã điền đủ giờ.")
 
     # --- SIDEBAR: 📤 GỬI REPORT ---
     st.sidebar.divider()
