@@ -67,8 +67,6 @@ def archive_sprint_data(config, stats):
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         s_no, s_start, s_end = get_current_sprint_info(config)
-        
-        # Tạo danh sách các dòng dữ liệu cho từng PIC
         new_entries_list = []
         for _, row in stats.iterrows():
             new_entries_list.append({
@@ -82,28 +80,49 @@ def archive_sprint_data(config, stats):
                 "Tasks_Total": int(row['total']),
                 "Updated_At": datetime.now(VN_TZ).strftime('%H:%M:%S %d/%m/%Y')
             })
-        
         new_entries_df = pd.DataFrame(new_entries_list)
-        
         try:
-            # Đọc lịch sử hiện tại
             history_df = conn.read(spreadsheet=config['url'], worksheet="History", ttl=0)
             if not history_df.empty:
-                # Ép kiểu để so sánh chính xác
                 history_df['Sprint'] = pd.to_numeric(history_df['Sprint'], errors='coerce')
-                # Xóa toàn bộ dữ liệu cũ của Sprint này để ghi đè (tránh trùng lặp khi nhấn lưu nhiều lần)
                 history_df = history_df[history_df['Sprint'] != int(s_no)]
                 updated_history = pd.concat([history_df, new_entries_df], ignore_index=True)
             else:
                 updated_history = new_entries_df
         except:
             updated_history = new_entries_df
-            
         conn.update(spreadsheet=config['url'], worksheet="History", data=updated_history)
         return True
     except Exception as e:
-        st.error(f"Lỗi lưu trữ: {e}. Đảm bảo sheet 'History' tồn tại.")
+        st.error(f"Lỗi lưu trữ: {e}")
         return False
+
+# --- 1.2 HÀM NHẮC NHỞ REAL-TIME RIÊNG BIỆT (MỚI) ---
+def send_realtime_reminder(project_name, config, missing_df):
+    if missing_df.empty:
+        st.sidebar.success("✅ Mọi người đã điền đủ giờ!")
+        return
+    time_now = datetime.now(VN_TZ).strftime('%H:%M')
+    msg = f"🔔 **NHẮC NHỞ CẬP NHẬT GIỜ REAL ({time_now})**\n"
+    msg += f"🚩 Dự án: {project_name}\n"
+    msg += "──────────────────────────────\n"
+    for pic in missing_df['PIC_Clean'].unique():
+        pic_tasks = missing_df[missing_df['PIC_Clean'] == pic]
+        icon = PIC_ICONS.get(pic, DEFAULT_ICON)
+        msg += f"{icon} **{pic}** ơi, điền giờ Real cho:\n"
+        for _, t in pic_tasks.iterrows():
+            msg += f"  • _{t['Userstory/Todo'][:40]}..._\n"
+    msg += "──────────────────────────────\n"
+    msg += "👉 *Vui lòng điền Real sau 5p hoàn thành task!*"
+    try:
+        if config['platform'] == "Telegram":
+            url = f"https://api.telegram.org/bot{config['bot_token']}/sendMessage"
+            requests.post(url, json={"chat_id": config['chat_id'], "text": msg, "parse_mode": "Markdown", "message_thread_id": config.get('topic_id')}, timeout=10)
+        elif config['platform'] == "Discord":
+            requests.post(config['webhook_url'], json={"content": msg}, timeout=10)
+        st.sidebar.warning("🚀 Đã bắn tin nhắc nhở riêng!")
+    except Exception as e:
+        st.sidebar.error(f"Lỗi: {e}")
 
 # --- 2. XỬ LÝ DỮ LIỆU ---
 def get_data_and_process(config_name):
@@ -111,19 +130,16 @@ def get_data_and_process(config_name):
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         df_raw = conn.read(spreadsheet=config['url'], header=None, ttl=0)
-        
         header_idx = None
         for i, row in df_raw.iterrows():
             if any("Userstory/Todo" in str(val) for val in row.values):
                 header_idx = i
                 break
-        
         if header_idx is not None:
             df = df_raw.iloc[header_idx:].copy()
             df.columns = df.iloc[0]
             df = df[1:].reset_index(drop=True)
             df.columns = [str(c).strip() for c in df.columns]
-
             current_us = "General"
             processed_data = []
             for _, row in df.iterrows():
@@ -131,27 +147,22 @@ def get_data_and_process(config_name):
                 pic = str(row.get('PIC', '')).strip()
                 state = str(row.get('State', '')).strip()
                 if not title or title.lower() == 'nan': continue
-                
                 if (not pic or pic.lower() == 'nan') and (not state or state.lower() == 'nan'):
                     current_us = title
                 else:
                     row_data = row.to_dict()
                     row_data['Assigned_US'] = current_us
                     processed_data.append(row_data)
-            
-            if not processed_data: return None
+            if not processed_data: return None, None
             df_final = pd.DataFrame(processed_data)
             df_final['PIC_Clean'] = df_final['PIC'].fillna('').astype(str).str.strip()
             df_final['State_Clean'] = df_final['State'].fillna('').astype(str).str.strip().str.lower()
-            
             for col in ['Estimate Dev', 'Real']:
                 if col in df_final.columns:
                     df_final[col] = pd.to_numeric(df_final[col].astype(str).str.replace('h',''), errors='coerce').fillna(0)
-            
             df_team = df_final[df_final['PIC_Clean'].isin(config['pics'])].copy()
             done_states = ['done', 'cancel', 'dev done']
             df_team['Is_Extra'] = df_team['Estimate Dev'] <= 0
-
             stats = df_team.groupby('PIC_Clean').agg(
                 total=('Userstory/Todo', 'count'),
                 done_count=('State_Clean', lambda x: x.isin(done_states).sum()),
@@ -162,30 +173,27 @@ def get_data_and_process(config_name):
                 real_total=('Real', 'sum')
             ).reset_index()
             stats.rename(columns={'PIC_Clean': 'PIC'}, inplace=True)
-
             def get_structured_tasks(pic):
                 p_df = df_team[df_team['PIC_Clean'] == pic]
                 def group_tasks(subset):
                     if subset.empty: return {}
                     return subset.groupby('Assigned_US')[['Userstory/Todo', 'State', 'Real', 'Estimate Dev']].apply(lambda x: x.to_dict('records')).to_dict()
-
                 return {
                     'pending_grouped': group_tasks(p_df[p_df['State_Clean'] == '']),
                     'sprint_grouped': group_tasks(p_df[(p_df['Is_Extra'] == False) & (p_df['State_Clean'] != '')]),
                     'extra_grouped': group_tasks(p_df[(p_df['Is_Extra'] == True) & (p_df['State_Clean'] != '')]),
                     'pending_count': len(p_df[p_df['State_Clean'] == ''])
                 }
-
             details = stats['PIC'].apply(get_structured_tasks)
             stats['details'] = details
             stats['pending_count'] = stats['details'].apply(lambda x: x['pending_count'])
             stats['percent'] = (stats['done_count'] / stats['total'] * 100).fillna(0).round(1)
-            return stats
+            return stats, df_team
     except Exception as e:
-        st.error(f"Lỗi hệ thống: {e}")
-    return None
+        st.error(f"Lỗi: {e}")
+    return None, None
 
-# --- 3. GỬI BÁO CÁO BOT ---
+# (Hàm send_report_logic giữ nguyên như cũ)
 def send_report_logic(project_name, config, pic_stats):
     s_no, _, _ = get_current_sprint_info(config)
     time_str = datetime.now(VN_TZ).strftime('%H:%M')
@@ -195,28 +203,18 @@ def send_report_logic(project_name, config, pic_stats):
         msg += f"{icon} **{r['PIC']}** ({r['percent']}%)\n"
         msg += f"┣ 📅 Sprint: {round(r['real_sprint'],1)}h/{round(r['est_sprint'],1)}h\n"
         if r['real_extra'] > 0: msg += f"┣ 🆘 Ngoài Sprint: {round(r['real_extra'],1)}h\n"
-        
         stt = f"┗ ✅: {int(r['done_count'])} | 🚧: {int(r['doing_count'])}"
         if r['pending_count'] > 0: stt += f" | ⚠️ Trống: {int(r['pending_count'])}"
         msg += stt + "\n──────────────────────────────\n"
-
     try:
         if config['platform'] == "Telegram":
             url = f"https://api.telegram.org/bot{config['bot_token']}/sendMessage"
             requests.post(url, json={"chat_id": config['chat_id'], "text": msg, "parse_mode": "Markdown", "message_thread_id": config.get('topic_id')}, timeout=10)
         elif config['platform'] == "Discord":
             requests.post(config['webhook_url'], json={"content": msg}, timeout=10)
-    except Exception as e: st.sidebar.error(f"Lỗi gửi tin: {e}")
+    except Exception as e: st.sidebar.error(f"Lỗi: {e}")
 
 # --- 4. GIAO DIỆN WEB ---
-if "--action" in sys.argv:
-    target = sys.argv[2].lower() if len(sys.argv) > 2 else "all"
-    for name, cfg in PROJECTS.items():
-        if target == "all" or target in name.lower():
-            stats = get_data_and_process(name)
-            if stats is not None: send_report_logic(name, cfg, stats)
-    sys.exit(0)
-
 st.set_page_config(page_title="Sprint Dashboard", page_icon="🚀", layout="wide")
 st.sidebar.title("📁 Projects")
 if 'selected_project' not in st.session_state: st.session_state.selected_project = list(PROJECTS.keys())[0]
@@ -227,30 +225,46 @@ for name in PROJECTS.keys():
         st.rerun()
 
 config = PROJECTS[st.session_state.selected_project]
-pic_stats = get_data_and_process(st.session_state.selected_project)
+pic_stats, df_team = get_data_and_process(st.session_state.selected_project)
 
 if pic_stats is not None:
     s_no, s_start, s_end = get_current_sprint_info(config)
     st.title(f"🚀 {st.session_state.selected_project}")
-    st.caption(f"📅 Sprint {int(s_no)}: {s_start.strftime('%d/%m')} - {s_end.strftime('%d/%m')}")
     
-    # --- Side Bar Actions ---
+    # --- SIDEBAR:🎯 KIỂM SOÁT REAL-TIME ---
+    st.sidebar.divider()
+    st.sidebar.subheader("🎯 Kiểm soát Real-time")
+    done_states = ['done', 'cancel', 'dev done']
+    missing_real_df = df_team[(df_team['State_Clean'].isin(done_states)) & ((df_team['Real'] == 0) | (df_team['Real'].isna()))].copy()
+    
+    if not missing_real_df.empty:
+        st.sidebar.error(f"⚠️ {len(missing_real_df)} task chưa điền Real!")
+        if st.sidebar.button("🔔 Bắn tin nhắc nhở riêng", use_container_width=True, type="primary"):
+            send_realtime_reminder(st.session_state.selected_project, config, missing_real_df)
+        with st.sidebar.expander("Xem danh sách nợ"):
+            for _, r in missing_real_df.iterrows():
+                st.caption(f"• **{r['PIC_Clean']}**: {r['Userstory/Todo'][:20]}...")
+    else:
+        st.sidebar.success("💎 Mọi người đã điền đủ giờ!")
+
+    # --- SIDEBAR: 📤 GỬI REPORT ---
     st.sidebar.divider()
     if st.sidebar.button("📤 Gửi báo cáo Bot", use_container_width=True):
         send_report_logic(st.session_state.selected_project, config, pic_stats)
         st.sidebar.success("Đã gửi báo cáo Bot!")
-
     if st.sidebar.button("💾 Lưu trữ Sprint chi tiết", use_container_width=True):
         if archive_sprint_data(config, pic_stats):
             st.sidebar.success(f"Đã lưu chi tiết Sprint {int(s_no)}!")
 
-    # Summary Metrics
+    # (Phần hiển thị bảng biểu, metrics phía dưới giữ nguyên)
     st.divider()
     t_cols = st.columns(4)
     t_cols[0].metric("📅 Tổng Sprint Est", f"{round(pic_stats['est_sprint'].sum(),1)}h")
     t_cols[1].metric("⌚ Thực tế Sprint", f"{round(pic_stats['real_sprint'].sum(),1)}h")
     t_cols[2].metric("🆘 Ngoài Sprint", f"{round(pic_stats['real_extra'].sum(),1)}h")
     t_cols[3].metric("⏳ Tổng Trống State", f"{int(pic_stats['pending_count'].sum())}")
+    
+    # ... các phần hiển thị Lịch sử và chi tiết PIC như trước ...
     
     # --- PHẦN HIỂN THỊ LỊCH SỬ ---
     with st.expander("📜 Lịch sử hiệu suất chi tiết (Worksheet: History)"):
