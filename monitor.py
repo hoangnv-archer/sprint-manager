@@ -5,7 +5,9 @@ import time
 import pandas as pd
 
 # 1. THÔNG TIN CẤU HÌNH
-WEBHOOK_URL = "https://discord.com/api/webhooks/1469191941261492386/gZ1sx5hnTojIKw5kp5quEotwIldRmCIlhXkZBu9M1Ejs-ZgEUtGsYHlS2CwIWguNbrzc"
+import os
+# Lấy URL từ Secret của GitHub thay vì dán trực tiếp
+WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK")
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1llUlTDfR413oZelu-AoMsC0lEzHqXOkB4SCwc_4zmAo/edit?gid=982443592#gid=982443592"
 SHEET_NAME = "Todo" # Ví dụ: "Sheet1" hoặc "Sprint 2026"
 ALLOWED_PICS = ["Quân", "Phú", "Tài", "Dương"] # Những người bạn muốn theo dõi
