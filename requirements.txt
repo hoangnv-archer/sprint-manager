@@ -2,3 +2,5 @@ pandas
 st-gsheets-connection
 plotly
 requests
+gspread
+oauth2client
