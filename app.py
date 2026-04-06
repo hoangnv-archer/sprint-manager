@@ -12,7 +12,7 @@ PIC_ICONS = {
     "Chuân": "🔧", "Việt": "💊", "Thắng": "✏️", "QA": "🔍",
     "Mai": "🌟", "Hải Anh": "✨", "Thuật": "🧬", "Hiếu": "💎",
     "Tài": "💰", "Dương": "🌊", "Quân": "⚔️", "Phú": "🏦",
-    "Thịnh": "📈", "Đô": "🏰", "Tùng": "🌲", "Anim": "🎬",
+    "Thịnh": "📈", "Đô": "🏰", "Thành": "🏰", "Anim": "🎬",
     "Thắng VFX": "🎆", "Đạt": "🦥", "Bình": "🍶", "Hồng": "🌹", "Lâm": "🌲", "An": "🐞"
 }
 DEFAULT_ICON = "👤"
@@ -31,7 +31,7 @@ PROJECTS = {
     },
     "Sprint Team Debuffer": {
         "url": "https://docs.google.com/spreadsheets/d/1llUlTDfR413oZelu-AoMsC0lEzHqXOkB4SCwc_4zmAo/edit?pli=1&gid=982443592#gid=982443592",
-        "pics": ['Tài', 'Dương', 'QA', 'Quân', 'Phú', 'Thịnh', 'Đô', 'Tùng', 'Anim', 'Thắng VFX'],
+        "pics": ['Tài', 'Dương', 'QA', 'Quân', 'Phú', 'Thịnh', 'Đô', 'Thành', 'Anim', 'Thắng VFX'],
         "platform": "Discord",
         "webhook_url": "https://discord.com/api/webhooks/1469191941261492386/gZ1sx5hnTojIKw5kp5quEotwIldRmCIlhXkZBu9M1Ejs-ZgEUtGsYHlS2CwIWguNbrzc",
         "sprint_start_date": "2026-02-23", 
