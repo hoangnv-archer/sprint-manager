@@ -13,7 +13,7 @@ PIC_ICONS = {
     "Mai": "🌟", "Hải Anh": "✨", "Thuật": "🧬", "Hiếu": "💎",
     "Tài": "💰", "Dương": "🌊", "Quân": "⚔️", "Phú": "🏦",
     "Thịnh": "📈", "Đô": "🏰", "Thành": "🏰", "Anim": "🎬",
-    "Thắng VFX": "🎆", "Đạt": "🦥", "Bình": "🍶", "Hồng": "🌹", "Lâm": "🌲", "An": "🐞"
+    "Thắng VFX": "🎆", "Đạt": "🦥", "Bình": "🍶", "Hồng": "🌹", "Lâm": "🌲", "An": "🐞", "Văn": "📕"
 }
 DEFAULT_ICON = "👤"
 
@@ -40,7 +40,7 @@ PROJECTS = {
     },
     "Sprint Team Skybow": {
         "url": "https://docs.google.com/spreadsheets/d/157YuS6Sq_Sr6GGl-Ze0Jb0vaIbXZMvlZmU1Yqni-6g4/edit?pli=1&gid=982443592#gid=982443592",
-        "pics": ['Đạt', 'Bình', 'QA', 'Lâm', 'Hồng', 'An'],
+        "pics": ['Đạt', 'Bình', 'QA', 'Lâm', 'Hồng', 'An', 'Văn'],
         "platform": "Telegram",
         "bot_token": "8722643729:AAGSvJtZVMRj-Wi2KwTctXSlJdWfMyVyxi8",
         "chat_id": "-1003176404805",
