@@ -3,7 +3,7 @@ name: Skybow Auto Report
 on:
   schedule:
     # 13:30 UTC = 20:30 Việt Nam
-    - cron: '00 21 * * 1-5'
+    - cron: '00 22 * * 1-5'
   workflow_dispatch:
 
 jobs:
