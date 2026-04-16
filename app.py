@@ -340,3 +340,36 @@ if pic_stats is not None:
     fig = px.scatter(pic_stats, x="total", y="real_total", size="real_total", color="PIC",
                      hover_name="PIC", labels={"total": "Tổng số Task", "real_total": "Tổng giờ thực tế (h)"})
     st.plotly_chart(fig, use_container_width=True)
+
+# --- 5. LOGIC CHẠY TỰ ĐỘNG (DÀNH CHO GITHUB ACTIONS) ---
+if __name__ == "__main__":
+    # Kiểm tra xem có đang chạy qua Terminal/GitHub Actions với tham số không
+    if len(sys.argv) > 1 and sys.argv[1] == '--action':
+        action_name = sys.argv[2]
+        print(f"🚀 Bắt đầu chạy Auto Report ngầm cho: {action_name}")
+        
+        # Xác định dự án dựa trên tham số truyền vào
+        project_key = None
+        if action_name == 'skybow':
+            project_key = "Sprint Team Skybow"
+        elif action_name == 'infinity':
+            project_key = "Sprint Team Infinity"
+        elif action_name == 'debuffer':
+            project_key = "Sprint Team Debuffer"
+            
+        if not project_key:
+            print("❌ Lỗi: Không tìm thấy cấu hình cho action này.")
+            sys.exit(1)
+            
+        config = PROJECTS[project_key]
+        pic_stats, df_team = get_data_and_process(project_key)
+        
+        if pic_stats is not None:
+            # Tự động gửi báo cáo mà không cần bấm nút
+            send_report_logic(project_key, config, pic_stats)
+            print(f"✅ Đã gửi báo cáo thành công cho {project_key}!")
+        else:
+            print("❌ Lỗi: Không lấy được dữ liệu từ Google Sheets.")
+            
+        # Chạy xong thì thoát luôn, không render giao diện Web nữa
+        sys.exit(0)
