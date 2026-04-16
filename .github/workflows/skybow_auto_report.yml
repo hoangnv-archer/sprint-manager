@@ -2,39 +2,36 @@ name: Skybow Auto Report
 
 on:
   schedule:
-    - cron: '30 20 * * 1-5'
+    # 13:30 UTC = 20:30 Việt Nam
+    - cron: '30 13 * * 1-5'
   workflow_dispatch:
 
 jobs:
   report:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4 
       
-      - uses: actions/setup-python@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          
+          cache: 'pip' 
+
       - name: Install dependencies
         run: |
+          python -m pip install --upgrade pip
           pip install pandas requests streamlit st-gsheets-connection plotly
           
-      - name: Tạo file Streamlit Secrets để kết nối Google Sheets
-        run: |
-          mkdir -p .streamlit
-          cat <<EOF > .streamlit/secrets.toml
-          [connections.gsheets]
-          type = "service_account"
-          project_id = "${{ secrets.GCP_PROJECT_ID }}"
-          private_key_id = "${{ secrets.GCP_PRIVATE_KEY_ID }}"
-          private_key = "${{ secrets.GCP_PRIVATE_KEY }}"
-          client_email = "${{ secrets.GCP_CLIENT_EMAIL }}"
-          client_id = "${{ secrets.GCP_CLIENT_ID }}"
-          auth_uri = "https://accounts.google.com/o/oauth2/auth"
-          token_uri = "https://oauth2.googleapis.com/token"
-          auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
-          client_x509_cert_url = "${{ secrets.GCP_CERT_URL }}"
-          EOF
-          
       - name: Run Report
+        env:
+          # Cần thiết để Streamlit kết nối GSheets (Nếu bạn dùng Private Sheet)
+          # Nếu dùng Public Sheet thì có thể bỏ qua phần secrets gsheets
+          CONNECTIONS_GSHEETS_TYPE: "service_account"
+          CONNECTIONS_GSHEETS_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          CONNECTIONS_GSHEETS_PRIVATE_KEY: ${{ secrets.GCP_PRIVATE_KEY }}
+          CONNECTIONS_GSHEETS_CLIENT_EMAIL: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          
+          # Thông tin Telegram (Đảm bảo đã add vào GitHub Secrets)
+          TELEGRAM_BOT_TOKEN: "8722643729:AAGSvJtZVMRj-Wi2KwTctXSlJdWfMyVyxi8"
+          TELEGRAM_CHAT_ID: "-1003176404805"
         run: python app.py --action skybow
