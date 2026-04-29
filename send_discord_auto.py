@@ -32,7 +32,7 @@ def get_report():
         df['State_Clean'] = df['State'].fillna('none').str.strip().str.lower()
         df['State_Clean'] = df['State_Clean'].replace(['', None], 'none')
         
-        valid_pics = ['Tài', 'Dương', 'QA', 'Quân', 'Phú', 'Thịnh', 'Đô', 'Tùng', 'Anim', 'Thắng VFX']
+        valid_pics = ['Tài', 'Dương', 'QA', 'Quân', 'Phú', 'Thịnh', 'Đô', 'Thành', 'Anim', 'Thắng VFX']
         df_team = df[df['PIC'].isin(valid_pics)].copy()
 
         # 4. TÍNH TOÁN (Đảm bảo kết quả là số)
@@ -45,6 +45,14 @@ def get_report():
         ).reset_index()
 
         # 5. SOẠN TIN NHẮN
+        PIC_EMOJIS = {
+        "QA": "🔍", "Tài": "💰", "Dương": "🌊", "Quân": "⚔️", "Phú": "🏦",
+        "Thịnh": "📈", "Đô": "🏰", "Thành": "🏰", "Anim": "🎬",
+        "Thắng VFX": "🎆"
+        }
+
+
+        
         msg = f"📊 **CẬP NHẬT TIẾN ĐỘ SPRINT** {DISCORD_TAGS.get('TEAM_ROLE', '@everyone')}\n"
         msg += "--------------------------\n"
         
@@ -61,11 +69,12 @@ def get_report():
             mention = DISCORD_TAGS.get(r['PIC'], f"**{r['PIC']}**")
             
             # Dòng hiển thị Done quan trọng ở đây:
-            msg += f"{icon} {mention}: `{progress:.1f}%` hoàn thành\n"
-            msg += f"   ✅ **Xong/Cancel: `{done}`**\n"
-            msg += f"   🚧 Đang làm: `{ip}`\n"
-            msg += f"   ⏳ Chưa làm: `{none}`\n"
-            msg += "------------------------------\n"
+            msg += f"{icon} \n"
+            msg += f"{emoji} {mention}: `{progress:.1f}%` hoàn thành\n"
+            msg += f" ┣ ✅ **Xong/Cancel: `{done}`**\n"
+            msg += f" ┣ 🚧 Đang làm: `{ip}`\n"
+            msg += f" ┗ ⏳ Chưa làm: `{none}`\n"
+            msg += "──────────────────\n"
         
         msg += "💡 *Ghi chú: Task được cập nhật hàng ngày theo Sprint backlog.*"
 
