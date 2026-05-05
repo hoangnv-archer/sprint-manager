@@ -45,16 +45,15 @@ def get_report():
         ).reset_index()
 
         # 5. SOẠN TIN NHẮN
+        # 5. SOẠN TIN NHẮN
         PIC_EMOJIS = {
-        "QA": "🔍", "Tài": "💰", "Dương": "🌊", "Quân": "⚔️", "Phú": "🏦",
-        "Thịnh": "📈", "Đô": "🏰", "Thành": "🏰", "Anim": "🎬",
-        "Thắng VFX": "🎆"
+            "QA": "🔍", "Tài": "💰", "Dương": "🌊", "Quân": "⚔️", "Phú": "🏦",
+            "Thịnh": "📈", "Đô": "🏰", "Thành": "🏰", "Anim": "🎬",
+            "Thắng VFX": "🎆"
         }
 
-
-        
         msg = f"📊 **CẬP NHẬT TIẾN ĐỘ SPRINT** {DISCORD_TAGS.get('TEAM_ROLE', '@everyone')}\n"
-        msg += "--------------------------\n"
+        msg += "━━━━━━━━━━━━━━━━━━\n\n"
         
         for _, r in pic_stats.iterrows():
             # Ép kiểu dữ liệu về số nguyên để hiển thị đúng
@@ -65,19 +64,19 @@ def get_report():
             
             progress = (done / total * 100) if total > 0 else 0
             icon = "🟢" if progress >= 80 else "🟡" if progress >= 50 else "🔴"
-            
             mention = DISCORD_TAGS.get(r['PIC'], f"**{r['PIC']}**")
             
-            # Dòng hiển thị Done quan trọng ở đây:
-            msg += f"{icon} \n"
-            msg += f"{emoji} {mention}: `{progress:.1f}%` hoàn thành\n"
+            # [ĐÃ SỬA BUG]: Khai báo và lấy emoji từ dictionary
+            emoji = PIC_EMOJIS.get(r['PIC'], "👤")
+            
+            # [ĐÃ SỬA THẨM MỸ]: Gộp Icon, Emoji và Tên lên cùng một dòng
+            msg += f"{icon} {emoji} {mention}: `{progress:.1f}%` hoàn thành\n"
             msg += f" ┣ ✅ **Xong/Cancel: `{done}`**\n"
             msg += f" ┣ 🚧 Đang làm: `{ip}`\n"
             msg += f" ┗ ⏳ Chưa làm: `{none}`\n"
             msg += "──────────────────\n"
         
         msg += "💡 *Ghi chú: Task được cập nhật hàng ngày theo Sprint backlog.*"
-
         # 6. Gửi tới Discord
         if WEBHOOK_URL:
             requests.post(WEBHOOK_URL, json={"content": msg})
