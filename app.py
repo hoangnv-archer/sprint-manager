@@ -97,6 +97,37 @@ def archive_sprint_data(config, stats):
         st.error(f"Lỗi lưu trữ: {e}")
         return False
 
+# --- 1.2b HÀM CẢNH BÁO TASK QUÁ GIỜ ESTIMATE ---
+def send_overtime_alert(project_name, config, overtime_df):
+    if overtime_df.empty:
+        st.sidebar.success("✅ Không có task nào quá giờ!")
+        return
+
+    time_now = datetime.now(VN_TZ).strftime('%H:%M')
+    msg = f"⏰ **CẢNH BÁO TASK QUÁ GIỜ ESTIMATE ({time_now})**\n"
+    msg += f"🚩 Dự án: {project_name}\n"
+    msg += "──────────────────────────────\n"
+
+    for pic in overtime_df['PIC_Clean'].unique():
+        pic_tasks = overtime_df[overtime_df['PIC_Clean'] == pic]
+        icon = PIC_ICONS.get(pic, DEFAULT_ICON)
+        msg += f"{icon} **{pic}** đang có task quá giờ:\n"
+        for _, t in pic_tasks.iterrows():
+            over = round(t['Real'] - t['Estimate Dev'], 1)
+            msg += f"  • _{t['Userstory/Todo'][:40]}..._ (Real: {t['Real']}h / Est: {t['Estimate Dev']}h, +{over}h)\n"
+
+    msg += "──────────────────────────────\n"
+    msg += "👉 *Cần cập nhật estimate hoặc đánh giá lại task!*"
+    try:
+        if config['platform'] == "Telegram":
+            url = f"https://api.telegram.org/bot{config['bot_token']}/sendMessage"
+            requests.post(url, json={"chat_id": config['chat_id'], "text": msg, "parse_mode": "Markdown", "message_thread_id": config.get('topic_id')}, timeout=10)
+        elif config['platform'] == "Discord":
+            requests.post(config['webhook_url'], json={"content": msg}, timeout=10)
+        st.sidebar.warning("🚀 Đã bắn cảnh báo quá giờ!")
+    except Exception as e:
+        st.sidebar.error(f"Lỗi: {e}")
+
 # --- 1.2 HÀM NHẮC NHỞ REAL-TIME RIÊNG BIỆT (MỚI) ---
 def send_realtime_reminder(project_name, config, missing_df):
     if missing_df.empty:
@@ -242,9 +273,28 @@ if pic_stats is not None:
         ((df_team['Real'] == 0) | (df_team['Real'].isna()))
     ].copy()
 
+    # Task đang in progress nhưng Real đã vượt Estimate
+    overtime_df = df_team[
+        (df_team['State_Clean'].str.contains('progress', na=False)) &
+        (df_team['Estimate Dev'] > 0) &
+        (df_team['Real'] > df_team['Estimate Dev'])
+    ].copy()
+
     st.sidebar.divider()
     st.sidebar.subheader("🎯 Kiểm soát Real-time")
-    
+
+    # --- Cảnh báo task quá giờ ---
+    if not overtime_df.empty:
+        st.sidebar.error(f"⏰ {len(overtime_df)} task đang quá giờ estimate!")
+        if st.sidebar.button("🚨 Cảnh báo quá giờ", use_container_width=True, type="primary"):
+            send_overtime_alert(st.session_state.selected_project, config, overtime_df)
+        with st.sidebar.expander("Xem chi tiết quá giờ"):
+            for _, r in overtime_df.iterrows():
+                over = round(r['Real'] - r['Estimate Dev'], 1)
+                st.caption(f"• **{r['PIC_Clean']}**: {r['Userstory/Todo'][:25]}... (+{over}h)")
+    else:
+        st.sidebar.success("✅ Không có task nào quá giờ.")
+
     if not missing_real_df.empty:
         st.sidebar.error(f"⚠️ {len(missing_real_df)} task chưa điền Real!")
         if st.sidebar.button("🔔 Bắn tin nhắc nhở", use_container_width=True, type="primary"):
@@ -327,7 +377,14 @@ if pic_stats is not None:
                             st.info("📅 **Sprint Tasks:**")
                             for us, tasks in d['sprint_grouped'].items():
                                 st.markdown(f"**📌 {us}**")
-                                for t in tasks: st.caption(f"└ {t['Userstory/Todo']} (`{t['State']}` | {t['Real']}h/{t['Estimate Dev']}h)")
+                                for t in tasks:
+                                    is_overtime = (
+                                        'progress' in str(t['State']).lower() and
+                                        float(t['Estimate Dev']) > 0 and
+                                        float(t['Real']) > float(t['Estimate Dev'])
+                                    )
+                                    over_tag = f" ⚠️ +{round(float(t['Real']) - float(t['Estimate Dev']), 1)}h" if is_overtime else ""
+                                    st.caption(f"└ {t['Userstory/Todo']} (`{t['State']}` | {t['Real']}h/{t['Estimate Dev']}h{over_tag})")
                         
                         if d['extra_grouped']:
                             st.warning("🆘 **Ngoài Sprint:**")
